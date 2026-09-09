@@ -1,0 +1,8 @@
+[package]
+name = "cctalk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embedded-hal-nb = "1.0"
+embedded-io = "0.6"
