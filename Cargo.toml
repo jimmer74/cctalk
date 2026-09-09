@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 embedded-hal-nb = "1.0"
 embedded-io = "0.6"
+heapless = "0.9.3"
+thiserror = "2.0.20"

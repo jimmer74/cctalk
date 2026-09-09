@@ -54,27 +54,83 @@ to 1-wire cctalk device. D should be a fast switching schottky (low forward volt
 pub mod errors;
 pub mod headers;
 pub mod tx;
-use std::iter;
 
-use embedded_io::{Read, Write};
+use embedded_io::{Read, ReadExactError, Write};
 use errors::CctalkMessageError;
 use headers::CcTalkHeader;
+use heapless::Vec as hVec;
+
+use crate::errors::CctalkTransmissionError;
 
 pub struct Cctalk<UART> {
     uart: UART,
+    echo: bool,
 }
 
 impl<UART> Cctalk<UART>
 where
     UART: Read + Write,
 {
-    pub fn new(uart: UART) -> Self {
-        Self { uart }
+    pub fn new(uart: UART, echo: bool) -> Self {
+        Self { uart, echo }
     }
 
-    pub fn transfer(msg: CctalkMessage) -> Result<CctalkMessage, UART::Error> {
+    pub fn transfer(
+        &mut self,
+        msg: CctalkMessage,
+    ) -> Result<CctalkMessage, CctalkTransmissionError> {
         // Ok(msg)
-        todo!("need to write tx fn and test on actual hardware + make interface board/connector");
+        let msg_bytes = match msg.try_to_bytes() {
+            Ok(msg) => msg,
+            Err(CctalkMessageError::HVecFailedToPush(dat)) => {
+                return Err(CctalkTransmissionError::FailedToFillTxBuffer(dat));
+            }
+            Err(_) => return Err(CctalkTransmissionError::FailedToFillTxBuffer(0x00)),
+        };
+
+        match self.uart.write_all(&msg_bytes) {
+            Ok(_) => {}
+            Err(_) => return Err(CctalkTransmissionError::FailedToTxData),
+        }
+
+        match self.uart.flush() {
+            Ok(_) => {}
+            Err(_) => return Err(CctalkTransmissionError::FailedToTxData),
+        }
+
+        if self.echo {
+            let mut buf = [0u8; 1];
+            for n in 0..msg_bytes.len() {
+                self.uart.read_exact(&mut buf);
+                if buf[0] != msg_bytes[n] {
+                    return Err(CctalkTransmissionError::FailedToReciveEcho(
+                        msg_bytes[n],
+                        buf[0],
+                    ));
+                }
+            }
+        }
+
+        let mut rx_buf: [u8; 260] = [0u8; 260];
+
+        //grab 1st four [dest, data_len, src. header]
+        match self.uart.read_exact(&mut rx_buf[0..=3]) {
+            Ok(_) => {}
+            Err(_) => return Err(CctalkTransmissionError::FailedToFetchHeader),
+        };
+
+        let data_len = rx_buf[1] as usize;
+
+        let packet_size = 4 + data_len + 1; // [(dest, data_len, src. header), data[..], chksum ]
+
+        match self.uart.read_exact(&mut rx_buf[4..packet_size]) {
+            Ok(_) => {}
+            Err(_) => return Err(CctalkTransmissionError::FailedToRxDataAndChksum),
+        };
+        match CctalkMessage::from_bytes(&rx_buf) {
+            Ok(msg) => return Ok(msg),
+            Err(e) => return Err(CctalkTransmissionError::FailedToConvertToMessage(e)),
+        };
     }
 }
 
@@ -84,7 +140,7 @@ pub struct CctalkMessage {
     src: u8,
     dest: u8,
     header: u8,
-    data: Vec<u8>,
+    data: hVec<u8, 255>,
     len: u8,
     chksum: Option<u8>,
 }
@@ -94,7 +150,7 @@ impl CctalkMessage {
     //length and chksum are calced from supplied data (source, dest, header, data).
     //if everything else is correct, then message will be correct
     // TODO: if header has no data component, should we test this and fail construction?
-    pub fn new(dest: u8, src: u8, header: CcTalkHeader, data: Vec<u8>) -> CctalkMessage {
+    pub fn new(dest: u8, src: u8, header: CcTalkHeader, data: hVec<u8, 255>) -> CctalkMessage {
         // let data_sum = data.iter().map(|&x| x as u16).sum::<u16>();
         let data_len = data.len() as u8;
         // let proto_sum: u8 =
@@ -128,13 +184,14 @@ impl CctalkMessage {
             dest: data[0],
             header: data[3],
             data: if data_len > 5 {
-                let mut tmp: Vec<u8> = vec![];
+                let mut tmp: hVec<u8, 255> = hVec::new();
                 for n in 4..data_len - 1 {
                     tmp.push(data[n as usize])
+                        .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
                 }
                 tmp
             } else {
-                vec![]
+                hVec::new()
             },
             len: data[1],
             chksum: Some(data[data_len as usize - 1]),
@@ -143,28 +200,40 @@ impl CctalkMessage {
         Ok(rx)
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn try_to_bytes(&self) -> Result<hVec<u8, 260>, CctalkMessageError> {
         let tx_buf_len = 5 + self.len;
-        let mut tx_buf = Vec::new();
+        let mut tx_buf = hVec::new();
 
         println!("msg buffer len = {} bytes", tx_buf_len);
-        tx_buf.push(self.dest);
-        tx_buf.push(self.len);
-        tx_buf.push(self.src);
-        tx_buf.push(self.header);
+        tx_buf
+            .push(self.dest)
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+        tx_buf
+            .push(self.len)
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+        tx_buf
+            .push(self.src)
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+        tx_buf
+            .push(self.header)
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
         for dat in self.data.iter() {
-            tx_buf.push(*dat);
+            tx_buf
+                .push(*dat)
+                .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
         }
-        tx_buf.push(self.chksum.unwrap());
+        tx_buf
+            .push(self.chksum.unwrap())
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
         println!("{:#04X?}", tx_buf);
 
-        tx_buf
+        Ok(tx_buf)
     }
 
     pub fn dest(self: &Self) -> u8 {
         self.dest
     }
-    pub fn data(self: &Self) -> &Vec<u8> {
+    pub fn data(self: &Self) -> &hVec<u8, 255> {
         &self.data
     }
     pub fn header(self: &Self) -> u8 {
@@ -229,13 +298,13 @@ mod tests {
             len: 0x00,
             src: 0x01,
             header: CcTalkHeader::SimplePoll as u8,
-            data: Vec::new(),
+            data: hVec::new(),
             chksum: Some(0xFF),
         };
 
         assert_eq!(
             testcase,
-            CctalkMessage::new(0x02, 0x01, CcTalkHeader::SimplePoll, Vec::new())
+            CctalkMessage::new(0x02, 0x01, CcTalkHeader::SimplePoll, hVec::new())
         );
     }
 
@@ -249,7 +318,7 @@ mod tests {
             src: 0x01,
             //new fn converts this on fly, but have to do manually here
             header: CcTalkHeader::DispenseHopperCoins as u8,
-            data: vec![0x02, 0x02],
+            data: hVec::from_array([0x02, 0x02]),
             chksum: Some(0x22),
         };
 
@@ -260,7 +329,7 @@ mod tests {
                 0x02,
                 0x01,
                 CcTalkHeader::DispenseHopperCoins,
-                vec![0x02, 0x02]
+                hVec::from_array([0x02, 0x02])
             )
         );
     }
@@ -272,7 +341,7 @@ mod tests {
             len: 0x02,
             src: 0x01,
             header: CcTalkHeader::SimplePoll as u8,
-            data: vec![0x2, 0x0],
+            data: hVec::from([0x2, 0x0]),
             chksum: Some(0xFF),
         };
 
@@ -281,7 +350,7 @@ mod tests {
         match res {
             Err(e) => {
                 assert_eq!(
-                    String::from("Error: Wrong chksum: 255, should be: 251"),
+                    String::from("Wrong chksum: 255, should be: 251"),
                     format!("{}", e)
                 )
             }
@@ -296,14 +365,14 @@ mod tests {
             len: 0x00,
             src: 0x01,
             header: CcTalkHeader::SimplePoll as u8,
-            data: vec![0x2, 0x0],
+            data: hVec::from_array([0x2, 0x0]),
             chksum: Some(0xFF),
         };
         let res = testcase.len_valid();
         match res {
             Err(e) => {
                 assert_eq!(
-                    String::from("Error: Wrong data length: 0, should be: 2"),
+                    String::from("Wrong data length: 0, should be: 2"),
                     format!("{}", e)
                 )
             }
@@ -317,12 +386,14 @@ mod tests {
             0x02,
             0x01,
             CcTalkHeader::UploadCalibrationData,
-            vec![0x34, 0xFF, 0x98, 0x13],
+            hVec::from_array([0x34, 0xFF, 0x98, 0x13]),
         );
 
         assert_eq!(
-            testcase.to_bytes(),
-            vec![
+            testcase
+                .try_to_bytes()
+                .expect("error couldn't convert test msg to bytes - fix the test!'"),
+            hVec::<u8, 255>::from_array([
                 0x02,                                      //dest
                 0x04,                                      //data len - 4 bytes
                 0x01,                                      //source
@@ -332,15 +403,22 @@ mod tests {
                 0x98,                                      // data byte 3
                 0x13,                                      // data byte 4
                 0x53                                       // chksum
-            ]
+            ])
         )
     }
 
     #[test]
     fn test_from_bytes() {
-        let cct = CctalkMessage::new(0x02, 0x01, CcTalkHeader::SimplePoll, vec![0x22, 0x01]);
+        let cct = CctalkMessage::new(
+            0x02,
+            0x01,
+            CcTalkHeader::SimplePoll,
+            hVec::from_array([0x22, 0x01]),
+        );
 
-        let data = cct.to_bytes();
+        let data = cct
+            .try_to_bytes()
+            .expect("error couldn't convert test msg to bytes - fix the test!'");
 
         match CctalkMessage::from_bytes(&data) {
             Ok(new_cct) => {
