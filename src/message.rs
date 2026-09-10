@@ -72,7 +72,7 @@ impl CctalkMessage {
         let tx_buf_len = 5 + self.len;
         let mut tx_buf = hVec::new();
 
-        println!("msg buffer len = {} bytes", tx_buf_len);
+        //println!("msg buffer len = {} bytes", tx_buf_len);
         _ = tx_buf
             .push(self.dest)
             .map_err(|x| CctalkMessageError::HVecFailedToPush(x));

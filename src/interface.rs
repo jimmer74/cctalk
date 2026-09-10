@@ -1,6 +1,7 @@
 use super::message::CctalkMessage;
 use crate::errors::{CctalkMessageError, CctalkTransmissionError};
 use embedded_hal_nb::serial::{Read, Write};
+use nb::block;
 
 pub struct Cctalk<UART> {
     uart: UART,
@@ -28,76 +29,109 @@ where
             Err(_) => return Err(CctalkTransmissionError::FailedToFillTxBuffer(0x00)),
         };
 
-        // match self.uart.write_all(&msg_bytes) {
-        //     Ok(_) => {}
-        //     Err(_) => return Err(CctalkTransmissionError::FailedToTxData),
-        // }
+        let msg_len = msg_bytes.len();
+        println!("sending: {:02x?}", msg_bytes);
+        for dat in msg_bytes.as_slice() {
+            block!(self.uart.write(*dat)).map_err(|_e| CctalkTransmissionError::FailedToTxData)?;
+        }
 
-        match self.uart.flush() {
+        println!("flushing buffer");
+        match block!(self.uart.flush()) {
             Ok(_) => {}
             Err(_) => return Err(CctalkTransmissionError::FailedToTxData),
         }
 
-        // if self.echo {
-        //     let mut buf = [0u8; 1];
-        //     for n in 0..msg_bytes.len() {
-        //         _ = self.uart.read_exact(&mut buf);
-        //         if buf[0] != msg_bytes[n] {
-        //             return Err(CctalkTransmissionError::FailedToReciveEcho(
-        //                 msg_bytes[n],
-        //                 buf[0],
-        //             ));
-        //         }
-        //     }
-        // }
-        //
+        if self.echo {
+            println!("reading echo");
+            let mut buf = [0u8; 1];
+            for n in 0..msg_len {
+                buf[0] = block!(self.uart.read())
+                    .map_err(|_| CctalkTransmissionError::FailedToFetchHeader)?;
+                if buf[0] != msg_bytes[n] {
+                    return Err(CctalkTransmissionError::FailedToReciveEcho(
+                        msg_bytes[n],
+                        buf[0],
+                    ));
+                } else {
+                    println!("read echo: {:02x?}", msg_bytes);
+                }
+            }
+        }
+
         let mut rx_buf: [u8; 260] = [0u8; 260];
-
-        //grab 1st four [dest, data_len, src. header]
-        // match self.uart.read_exact(&mut rx_buf[0..=3]) {
-        //     Ok(_) => {}
-        //     Err(_) => return Err(CctalkTransmissionError::FailedToFetchHeader),
-        // };
-
+        println!("reading header");
+        for n in 0..=3 {
+            rx_buf[n] = block!(self.uart.read())
+                .map_err(|_| CctalkTransmissionError::FailedToFetchHeader)?;
+        }
+        println!("read header bytes: {:02x?}", &rx_buf[0..4]);
         let data_len = rx_buf[1] as usize;
 
         let packet_size = 4 + data_len + 1; // [(dest, data_len, src. header), data[..], chksum ]
 
-        // match self.uart.read_exact(&mut rx_buf[4..packet_size]) {
-        //     Ok(_) => {}
-        //     Err(_) => return Err(CctalkTransmissionError::FailedToRxDataAndChksum),
-        // };
-        match CctalkMessage::from_bytes(&rx_buf) {
+        println!("reading data/chksum bytes");
+        for n in 4..packet_size {
+            rx_buf[n] = block!(self.uart.read())
+                .map_err(|_| CctalkTransmissionError::FailedToFetchHeader)?;
+        }
+
+        println!("read data bytes: {:02x?}", &rx_buf[4..packet_size - 1]);
+        println!("read chksum: {:02x?}", &rx_buf[packet_size - 1]);
+
+        match CctalkMessage::from_bytes(&rx_buf[0..packet_size]) {
             Ok(msg) => return Ok(msg),
-            Err(e) => return Err(CctalkTransmissionError::FailedToConvertToMessage(e)),
+            Err(e) => {
+                println!(
+                    "rx bytes are not a valid msg: {:02x?}",
+                    &rx_buf[0..packet_size]
+                );
+                return Err(CctalkTransmissionError::FailedToConvertToMessage(e));
+            }
         };
     }
 }
 
 mod tests {
     use super::*;
+    use crate::headers::CcTalkHeader;
     use heapless::Vec as hVec;
     //add embedded_hal_mock here for tests;
     #[test]
     fn test_send_cctalk() {
         use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
-        // use embedded_io::{Read, Write};
         use embedded_hal_nb::serial::{Read, Write};
-        let testcase = CctalkMessage::new(
+
+        let tx_case = CctalkMessage::new(
             0x02,
             0x01,
             crate::headers::CcTalkHeader::SimplePoll,
             hVec::new(),
         );
 
-        let msg = testcase.try_to_bytes().unwrap();
+        let rx_bytes = [
+            0x01,                                      //dest
+            0x04,                                      //data len - 4 bytes
+            0x02,                                      //source
+            CcTalkHeader::UploadCalibrationData as u8, //header
+            0x34,                                      // data byte 1
+            0xFF,                                      // data byte 2
+            0x98,                                      // data byte 3
+            0x13,                                      // data byte 4
+            0x53,
+        ];
+        // let msg = tx_case.try_to_bytes().unwrap();
 
         let expectations = [
-            UartTransaction::write_many(testcase.try_to_bytes().unwrap()),
-            UartTransaction::read_many(testcase.try_to_bytes().unwrap()),
+            UartTransaction::write_many(tx_case.try_to_bytes().unwrap()),
+            UartTransaction::flush(),
+            UartTransaction::read_many(tx_case.try_to_bytes().unwrap()),
+            UartTransaction::read_many(rx_bytes),
         ];
 
-        let uart = UartMock::new(&expectations);
-        let cctalk = Cctalk::new(uart, false);
+        let mut uart = UartMock::new(&expectations);
+        let mut cctalk = Cctalk::new(uart.clone(), true);
+        let result = cctalk.transfer(tx_case).unwrap();
+        assert_eq!(result, CctalkMessage::from_bytes(&rx_bytes).unwrap());
+        uart.done();
     }
 }

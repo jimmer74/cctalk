@@ -23,6 +23,7 @@ dependencies = [
  "embedded-io",
  "heapless",
  "mock-embedded-io",
+ "nb 1.1.0",
  "thiserror",
 ]
 
