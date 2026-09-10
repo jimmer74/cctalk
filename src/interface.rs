@@ -1,4 +1,4 @@
-use crate::CctalkMessage;
+use super::message::CctalkMessage;
 use crate::errors::{CctalkMessageError, CctalkTransmissionError};
 
 pub struct Cctalk<UART> {
@@ -70,5 +70,33 @@ where
             Ok(msg) => return Ok(msg),
             Err(e) => return Err(CctalkTransmissionError::FailedToConvertToMessage(e)),
         };
+    }
+}
+
+mod tests {
+    use super::*;
+    use heapless::Vec as hVec;
+    //add embedded_hal_mock here for tests;
+    #[test]
+    fn test_send_cctalk() {
+        // use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
+        // use embedded_io::{Read, Write};
+        //
+        // let testcase = CctalkMessage::new(
+        //     0x02,
+        //     0x01,
+        //     crate::headers::CcTalkHeader::SimplePoll,
+        //     hVec::new(),
+        // );
+        //
+        // let msg = testcase.try_to_bytes().unwrap();
+        //
+        // let expectations = [
+        //     UartTransaction::write_many(testcase.try_to_bytes().unwrap()),
+        //     UartTransaction::read_many(testcase.try_to_bytes().unwrap()),
+        // ];
+        //
+        // let uart = UartMock::new(&expectations);
+        // let cctalk = Cctalk::new(uart, false);
     }
 }
