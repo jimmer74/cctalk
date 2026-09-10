@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+embedded-hal-mock = "0.11.1"
 embedded-hal-nb = "1.0"
 embedded-io = "0.6"
 heapless = "0.9.3"
+mock-embedded-io = "0.1.0"
 thiserror = "2.0.20"

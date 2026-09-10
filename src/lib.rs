@@ -1,61 +1,8 @@
-/*
-
- *  pin 1 - ccTalk Data
- *  pin 2 - n/a
- *  pin 3 - n/a
- *  pin 4 - n/a
- *  pin 5 - /RESET - leave floating if not used
- *  pin 6v- n/a
- *  pin 7 - 12-24v dc
- *  pin 8 - GND
- *  pin 9 - Serial mode (low for ccTalk if no dip sw)
- *  pin 10 - reserved (leave floating)
-
-               GND
-                │
-      ┌────────▼────┐
-    2 │  O O O X O  │ 10
-      │             │
-    1 │  X O X X X  │ 9
-      └──▲─┌─▲─▲─▲──┘
-         │ └─┼─┤ │
-  Data ──┘   │ │ └── Mode
-/RESET ──────┘ └──── 12v-24v)
-
-
-Non open-collector TX on raspberry pi needs following to enable 2-wire
-to 1-wire cctalk device. D should be a fast switching schottky (low forward voltage drop)
-
-           PWR
-            ▲                            3v3
-            │                             ▲
-            │                             │
-            │                            ┌┴┐
-┌───────────┴────────────┐               │ │
-│                        │               │ │ 10K
-│                        │               └┬┘
-│                     TX ┼───────── D ────┤
-│                        │       ◄─────   │
-│           uC           │                │
-│                        │                │
-│                        │                │
-│                     RX ┼────────────────┴─────── CCtalk Device
-│                        │
-│                        │
-└────────────┬───────────┘
-             │
-             │
-             │
-             ▼
-            GND
-
-*/
-
 pub mod errors;
 pub mod headers;
 pub mod tx;
 
-use embedded_io::{Read, ReadExactError, Write};
+use embedded_io::{Read, Write};
 use errors::CctalkMessageError;
 use headers::CcTalkHeader;
 use heapless::Vec as hVec;
@@ -288,7 +235,35 @@ impl CctalkMessage {
 
 #[cfg(test)]
 mod tests {
+    // use embedded_hal_mock::eh0::i2c::Transaction;
+
     use super::*;
+
+    // add embedded_hal_mock here for tests;
+    // #[test]
+    // fn test_send_cctalk() {
+    //     use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
+    //     use embedded_hal_nb::serial::{Read, Write};
+    //
+    //     let testcase = CctalkMessage {
+    //         dest: 0x02,
+    //         len: 0x00,
+    //         src: 0x01,
+    //         header: CcTalkHeader::SimplePoll as u8,
+    //         data: hVec::new(),
+    //         chksum: Some(0xFF),
+    //     };
+    //     let msg = testcase.try_to_bytes().unwrap();
+    //
+    //     let expectations = [
+    //         UartTransaction::write_many(testcase.try_to_bytes().unwrap()),
+    //         UartTransaction::read_many(testcase.try_to_bytes().unwrap()),
+    //     ];
+    //
+    //
+    //     let uart = UartMock::new(&expectations);
+    //     let cctalk = Cctalk::new(uart, false);
+    // }
 
     #[test]
     fn test_new_cctalk() {
