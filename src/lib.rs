@@ -48,7 +48,7 @@ where
         if self.echo {
             let mut buf = [0u8; 1];
             for n in 0..msg_bytes.len() {
-                self.uart.read_exact(&mut buf);
+                _ = self.uart.read_exact(&mut buf);
                 if buf[0] != msg_bytes[n] {
                     return Err(CctalkTransmissionError::FailedToReciveEcho(
                         msg_bytes[n],
@@ -133,7 +133,8 @@ impl CctalkMessage {
             data: if data_len > 5 {
                 let mut tmp: hVec<u8, 255> = hVec::new();
                 for n in 4..data_len - 1 {
-                    tmp.push(data[n as usize])
+                    _ = tmp
+                        .push(data[n as usize])
                         .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
                 }
                 tmp
@@ -152,24 +153,24 @@ impl CctalkMessage {
         let mut tx_buf = hVec::new();
 
         println!("msg buffer len = {} bytes", tx_buf_len);
-        tx_buf
+        _ = tx_buf
             .push(self.dest)
             .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        tx_buf
+        _ = tx_buf
             .push(self.len)
             .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        tx_buf
+        _ = tx_buf
             .push(self.src)
             .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        tx_buf
+        _ = tx_buf
             .push(self.header)
             .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
         for dat in self.data.iter() {
-            tx_buf
+            _ = tx_buf
                 .push(*dat)
                 .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
         }
-        tx_buf
+        _ = tx_buf
             .push(self.chksum.unwrap())
             .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
         println!("{:#04X?}", tx_buf);
