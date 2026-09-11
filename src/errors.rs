@@ -10,29 +10,35 @@ pub enum CctalkMessageError {
     #[error("Wrong chksum: {0}, should be: {1}")]
     IncorrectChksum(u8, u8), //current checksum, correct checksum
     #[error("CCtalk packet too short: {0} bytes (min valid length: 5 bytes)")]
-    MessageTooShort(u8),
+    MessageTooShort(usize),
     #[error("Heapless vec is full, cannot push byte: {0:#02X}")] // current message length
     HVecFailedToPush(u8), // hVec is full!
     #[error("Chksum not set!")] //
     NoChkSum,
 }
 
-#[derive(Error, Debug, PartialEq)]
+#[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum CctalkTransmissionError {
     #[error("Failed to tx cctalk data")]
     FailedToTxData,
     #[error("failed to receive tx echo")]
     FailedToReciveEcho,
-    #[error("failed to fill tx_buffer ")]
+    #[error("failed to fill tx_buffer")]
     FailedToFillTxBuffer,
-    #[error("failed to fetch [dest,len,src,header]")]
-    FailedToFetchHeader,
-    #[error("failed to rx data and chksum")]
-    FailedToRxDataAndChksum,
     #[error("failed to convert rx data to msg")]
     FailedToConvertToMessage,
     #[error("Rx data err")]
     FailedToRxData,
+    #[error("Rx data wrong len")]
+    RxDataMalformedLength,
+    #[error("Rx data wrong chksum")]
+    RxDataMalformedChksum,
+    #[error("Rx data worng address")]
+    RxDataWrongAddress,
+    #[error("unknown error occured")]
+    UnknownError,
+    #[error("Message error: {0}")]
+    CctalkMessageError(CctalkMessageError),
 }
 // Implement embedded-hal's serial error trait
 impl nbError for CctalkTransmissionError {
@@ -41,4 +47,5 @@ impl nbError for CctalkTransmissionError {
         ErrorKind::Other
     }
 }
+
 // impl ErrorKind for CctalkTransmissionError {}

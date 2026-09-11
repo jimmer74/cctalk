@@ -37,22 +37,34 @@ impl CctalkMessage {
         msg
     }
     // packet [dest, len, src, header, data[..], chksum]
-    pub fn from_bytes(data: &[u8]) -> Result<CctalkMessage, CctalkMessageError> {
-        let data_len = data.len() as u8;
+    pub fn try_from_bytes(data: &[u8]) -> Result<CctalkMessage, CctalkMessageError> {
+        let packet_len = data.len();
 
-        if data_len <= 4 {
-            return Err(CctalkMessageError::MessageTooShort(data_len));
+        if packet_len <= 4 {
+            return Err(CctalkMessageError::MessageTooShort(packet_len));
         }
 
+        if data[1] as usize + 5 != packet_len {
+            println!(
+                "actual packet len: {}, calculated packet len: {}, packet: {:02X?}",
+                packet_len,
+                data[1] + 5,
+                &data[..]
+            );
+            return Err(CctalkMessageError::IncorrectDataLen(
+                data[1] + 5,
+                packet_len as u8,
+            ));
+        }
         //if data_len > 5
 
         let rx = CctalkMessage {
             src: data[2],
             dest: data[0],
             header: data[3],
-            data: if data_len > 5 {
+            data: if packet_len > 5 {
                 let mut tmp: hVec<u8, 255> = hVec::new();
-                for n in 4..data_len - 1 {
+                for n in 4..packet_len - 1 {
                     _ = tmp
                         .push(data[n as usize])
                         .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
@@ -62,7 +74,7 @@ impl CctalkMessage {
                 hVec::new()
             },
             len: data[1],
-            chksum: Some(data[data_len as usize - 1]),
+            chksum: Some(data[packet_len as usize - 1]),
         };
 
         Ok(rx)
@@ -272,7 +284,7 @@ mod tests {
             .try_to_bytes()
             .expect("error couldn't convert test msg to bytes - fix the test!'");
 
-        match CctalkMessage::from_bytes(&data) {
+        match CctalkMessage::try_from_bytes(&data) {
             Ok(new_cct) => {
                 assert_eq!(cct, new_cct);
             }
