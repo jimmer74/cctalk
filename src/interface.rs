@@ -95,11 +95,10 @@ mod tests {
     use super::*;
     use crate::headers::CcTalkHeader;
     use heapless::Vec as hVec;
-    //add embedded_hal_mock here for tests;
+
     #[test]
-    fn test_send_cctalk() {
+    fn test_send_cctalk_echo() {
         use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
-        use embedded_hal_nb::serial::{Read, Write};
 
         let tx_case = CctalkMessage::new(
             0x02,
@@ -119,7 +118,6 @@ mod tests {
             0x13,                                      // data byte 4
             0x53,
         ];
-        // let msg = tx_case.try_to_bytes().unwrap();
 
         let expectations = [
             UartTransaction::write_many(tx_case.try_to_bytes().unwrap()),
@@ -130,8 +128,56 @@ mod tests {
 
         let mut uart = UartMock::new(&expectations);
         let mut cctalk = Cctalk::new(uart.clone(), true);
-        let result = cctalk.transfer(tx_case).unwrap();
-        assert_eq!(result, CctalkMessage::from_bytes(&rx_bytes).unwrap());
+
+        let result = cctalk.transfer(tx_case);
+
+        assert_eq!(
+            result.unwrap(),
+            CctalkMessage::from_bytes(&rx_bytes).unwrap()
+        );
+
+        uart.done();
+    }
+
+    #[test]
+    fn test_send_cctalk_noecho() {
+        use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
+
+        let tx_case = CctalkMessage::new(
+            0x02,
+            0x01,
+            crate::headers::CcTalkHeader::SimplePoll,
+            hVec::new(),
+        );
+
+        let rx_bytes = [
+            0x01,                                      //dest
+            0x04,                                      //data len - 4 bytes
+            0x02,                                      //source
+            CcTalkHeader::UploadCalibrationData as u8, //header
+            0x34,                                      // data byte 1
+            0xFF,                                      // data byte 2
+            0x98,                                      // data byte 3
+            0x13,                                      // data byte 4
+            0x53,
+        ];
+
+        let expectations = [
+            UartTransaction::write_many(tx_case.try_to_bytes().unwrap()),
+            UartTransaction::flush(),
+            UartTransaction::read_many(rx_bytes),
+        ];
+
+        let mut uart = UartMock::new(&expectations);
+        let mut cctalk = Cctalk::new(uart.clone(), false);
+
+        let result = cctalk.transfer(tx_case);
+
+        assert_eq!(
+            result.unwrap(),
+            CctalkMessage::from_bytes(&rx_bytes).unwrap()
+        );
+
         uart.done();
     }
 }

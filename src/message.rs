@@ -69,7 +69,7 @@ impl CctalkMessage {
     }
 
     pub fn try_to_bytes(&self) -> Result<hVec<u8, 260>, CctalkMessageError> {
-        let tx_buf_len = 5 + self.len;
+        // let tx_buf_len = 5 + self.len;
         let mut tx_buf = hVec::new();
 
         //println!("msg buffer len = {} bytes", tx_buf_len);
