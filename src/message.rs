@@ -3,7 +3,7 @@ use super::headers::CcTalkHeader;
 use heapless::Vec as hVec;
 
 // #[allow(dead_code)]
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct CctalkMessage {
     src: u8,
     dest: u8,
@@ -93,7 +93,7 @@ impl CctalkMessage {
         _ = tx_buf
             .push(self.chksum.unwrap())
             .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        println!("{:#04X?}", tx_buf);
+        // println!("{:#04X?}", tx_buf);
 
         Ok(tx_buf)
     }
@@ -146,7 +146,7 @@ impl CctalkMessage {
         if self.data.len() as u8 == self.len {
             Ok(self.len)
         } else {
-            Err(CctalkMessageError::IncorrestDataLen(
+            Err(CctalkMessageError::IncorrectDataLen(
                 self.len,
                 self.data.len() as u8,
             ))
