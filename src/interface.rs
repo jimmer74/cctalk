@@ -23,12 +23,15 @@ where
     ) -> Result<CctalkMessage, CctalkTransmissionError> {
         let _msg_bytes = self
             .write(msg.clone())
-            .map_err(|_e| CctalkTransmissionError::FailedToTxData)?;
+            .map_err(|e| CctalkTransmissionError::FailedToFillTxBuffer)?;
 
         println!("flushing buffer");
         match block!(self.uart.flush()) {
-            Ok(_) => {}
-            Err(_) => return Err(CctalkTransmissionError::FailedToTxData),
+            Ok(_) => println!("successfully flushed"),
+            Err(_) => {
+                println!("failed to flush");
+                return Err(CctalkTransmissionError::FailedToTxData);
+            }
         }
 
         if self.echo {
