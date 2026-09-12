@@ -77,7 +77,7 @@ where
                 }
                 Err(nb::Error::WouldBlock) => {
                     // println!("would block");
-                    break;
+                    continue;
                 }
                 Err(nb::Error::Other(_e)) => {
                     break; //writelnreturn // println!("{:?}", e);
