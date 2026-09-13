@@ -72,7 +72,7 @@ where
     pub fn read(&mut self, timeout_ms: u32) -> Result<CctalkMessage, CctalkMessageError> {
         let mut n = 0_usize;
         let mut rx_buf: [u8; 260] = [0u8; 260];
-        const POLL_INTERVAL_MS: u32 = 10_u32;
+        const POLL_INTERVAL_MS: u32 = 1_u32;
         let mut elapsed_ms = 0_u32;
         loop {
             match self.uart.read() {
