@@ -1,20 +1,25 @@
 use super::message::CctalkMessage;
 use crate::errors::{CctalkMessageError, CctalkTransmissionError};
+use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{self, Read, Write};
 use heapless::Vec as hVec;
 use nb::block;
 
-pub struct Cctalk<UART> {
+const CCTALK_TIMEOUT_MS: u32 = 200_u32;
+
+pub struct Cctalk<UART, DELAY> {
     uart: UART,
+    delay: DELAY,
     echo: bool,
 }
 
-impl<UART> Cctalk<UART>
+impl<UART, DELAY> Cctalk<UART, DELAY>
 where
     UART: Read + Write,
+    DELAY: DelayNs,
 {
-    pub fn new(uart: UART, echo: bool) -> Self {
-        Self { uart, echo }
+    pub fn new(uart: UART, delay: DELAY, echo: bool) -> Self {
+        Self { uart, delay, echo }
     }
 
     pub fn transfer(
@@ -23,7 +28,7 @@ where
     ) -> Result<CctalkMessage, CctalkTransmissionError> {
         let _msg_bytes = self
             .write(msg.clone())
-            .map_err(|e| CctalkTransmissionError::FailedToFillTxBuffer)?;
+            .map_err(|_e| CctalkTransmissionError::FailedToFillTxBuffer)?;
 
         println!("flushing buffer");
         match block!(self.uart.flush()) {
@@ -35,7 +40,7 @@ where
         }
 
         if self.echo {
-            match self.read() {
+            match self.read(CCTALK_TIMEOUT_MS) {
                 Ok(rx_msg) => {
                     if rx_msg == msg {
                         println!("echo matches, discarding");
@@ -50,7 +55,7 @@ where
         }
 
         let msg = self
-            .read()
+            .read(CCTALK_TIMEOUT_MS)
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         // let _data_len = msg
@@ -64,10 +69,11 @@ where
         Ok(msg)
     }
 
-    pub fn read(&mut self) -> Result<CctalkMessage, CctalkMessageError> {
+    pub fn read(&mut self, timeout_ms: u32) -> Result<CctalkMessage, CctalkMessageError> {
         let mut n = 0_usize;
         let mut rx_buf: [u8; 260] = [0u8; 260];
-
+        const POLL_INTERVAL_MS: u32 = 10_u32;
+        let mut elapsed_ms = 0_u32;
         loop {
             match self.uart.read() {
                 Ok(byte) => {
@@ -76,8 +82,13 @@ where
                     n = n + 1;
                 }
                 Err(nb::Error::WouldBlock) => {
-                    // println!("would block");
-                    break;
+                    self.delay.delay_ms(POLL_INTERVAL_MS);
+                    elapsed_ms += POLL_INTERVAL_MS;
+
+                    if elapsed_ms >= timeout_ms {
+                        break;
+                    }
+                    continue;
                 }
                 Err(nb::Error::Other(_e)) => {
                     break; //writelnreturn // println!("{:?}", e);
@@ -109,9 +120,23 @@ where
 mod tests {
     use super::*;
     use crate::{errors::CctalkTransmissionError::RxDataMalformedLength, headers::CcTalkHeader};
+    use embedded_hal::delay::DelayNs;
     use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
     use heapless::Vec as hVec;
     use nb::Error::WouldBlock;
+
+    struct MockDelay {
+        pub total_ms_delayed: u32,
+    }
+
+    impl DelayNs for MockDelay {
+        fn delay_ns(&mut self, ns: u32) {
+            self.total_ms_delayed += ns / 1_000_000;
+        }
+        fn delay_ms(&mut self, mut ms: u32) {
+            self.total_ms_delayed += ms;
+        }
+    }
 
     #[test]
     fn test_rx_cctalk_msg() {
@@ -131,12 +156,33 @@ mod tests {
         let expectations = [
             UartTransaction::read_many(rx_bytes),
             UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
         ];
-
+        let mut timer = MockDelay {
+            total_ms_delayed: 0,
+        };
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = Cctalk::new(uart.clone(), true);
+        let mut cctalk = Cctalk::new(uart.clone(), timer, true);
 
-        let result = cctalk.read().map_err(|_e| CctalkMessageError::NoChkSum);
+        let result = cctalk.read(200).map_err(|_e| CctalkMessageError::NoChkSum);
 
         assert_eq!(CctalkMessage::try_from_bytes(&rx_bytes), result);
 
@@ -163,7 +209,10 @@ mod tests {
         ])];
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = Cctalk::new(uart.clone(), true);
+        let mut timer = MockDelay {
+            total_ms_delayed: 0,
+        };
+        let mut cctalk = Cctalk::new(uart.clone(), timer, true);
 
         let result = cctalk.write(tx_case.clone()).unwrap();
         assert_eq!(&result[..], tx_case.try_to_bytes().unwrap().as_slice());
@@ -172,8 +221,6 @@ mod tests {
 
     #[test]
     fn test_send_cctalk_echo() {
-        // use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
-
         let tx_case = CctalkMessage::new(
             0x02,
             0x01,
@@ -198,12 +245,53 @@ mod tests {
             UartTransaction::flush(),
             UartTransaction::read_many(tx_case.try_to_bytes().unwrap()),
             UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
             UartTransaction::read_many(rx_bytes),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
             UartTransaction::read_error(WouldBlock),
         ];
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = Cctalk::new(uart.clone(), true);
+        let mut timer = MockDelay {
+            total_ms_delayed: 0,
+        };
+        let mut cctalk = Cctalk::new(uart.clone(), timer, true);
 
         let result = cctalk.transfer(tx_case);
 
@@ -243,10 +331,32 @@ mod tests {
             UartTransaction::flush(),
             UartTransaction::read_many(rx_bytes),
             UartTransaction::read_error(WouldBlock), // functionality at end of transfer fn
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock), //
         ];
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = Cctalk::new(uart.clone(), false);
+        let mut timer = MockDelay {
+            total_ms_delayed: 0,
+        };
+        let mut cctalk = Cctalk::new(uart.clone(), timer, false);
 
         let result = cctalk.transfer(tx_case);
 
@@ -277,10 +387,32 @@ mod tests {
             //the 4th bit - simulates
             //a common erro on the wire)
             UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
         ];
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = Cctalk::new(uart.clone(), true);
+        let mut timer = MockDelay {
+            total_ms_delayed: 0,
+        };
+        let mut cctalk = Cctalk::new(uart.clone(), timer, true);
 
         let result = cctalk.transfer(tx_case);
 
@@ -318,10 +450,34 @@ mod tests {
             UartTransaction::flush(),
             UartTransaction::read_many(rx_bytes),
             UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            // UartTransaction::read_error(WouldBlock),
         ];
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = Cctalk::new(uart.clone(), false);
+
+        let mut timer = MockDelay {
+            total_ms_delayed: 0,
+        };
+        let mut cctalk = Cctalk::new(uart.clone(), timer, false);
 
         //this is definately an error, and this will
         //convert it to an Option<E> for easy assert
