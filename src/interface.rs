@@ -80,6 +80,10 @@ where
                     // println!("rx: {:02x?}, byte no: {}", byte, n);
                     rx_buf[n] = byte;
                     n = n + 1;
+
+                    if n == 260 {
+                        break;
+                    }
                 }
                 Err(nb::Error::WouldBlock) => {
                     self.delay.delay_ms(POLL_INTERVAL_MS);
