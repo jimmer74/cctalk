@@ -38,7 +38,7 @@ where
                 return Err(CctalkTransmissionError::FailedToTxData);
             }
         }
-
+        self.delay.delay_ms(10);
         if self.echo {
             match self.read(CCTALK_TIMEOUT_MS) {
                 Ok(rx_msg) => {
