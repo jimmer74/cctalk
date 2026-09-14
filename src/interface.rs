@@ -39,7 +39,7 @@ where
                 return Err(CctalkTransmissionError::FailedToTxData);
             }
         }
-        self.delay.delay_ms(20);
+        // self.delay.delay_ms(20);
         if self.echo {
             match self.read_exact(timeout_ms, msg_bytes.len()) {
                 Ok(rx_msg) => {

@@ -41,6 +41,11 @@ impl CctalkMessage {
         let packet_len = data.len();
 
         if packet_len <= 4 {
+            println!(
+                "packket too short! Actual packet len: {}, packet: {:02X?}",
+                packet_len,
+                &data[..]
+            );
             return Err(CctalkMessageError::MessageTooShort(packet_len));
         }
 
