@@ -5,8 +5,6 @@ use embedded_hal_nb::serial::{self, Read, Write};
 use heapless::Vec as hVec;
 use nb::block;
 
-const CCTALK_TIMEOUT_MS: u32 = 200_u32;
-
 pub struct Cctalk<UART, DELAY> {
     uart: UART,
     delay: DELAY,
@@ -22,6 +20,10 @@ where
         Self { uart, delay, echo }
     }
 
+
+    //INFO: orginally had a write flush in here, which produced weird inconsistent results when
+    //reading the echo
+    //WARN: do not put flush back!!!!
     pub fn transfer(
         &mut self,
         msg: CctalkMessage,
@@ -31,14 +33,6 @@ where
             .write(msg.clone())
             .map_err(|_e| CctalkTransmissionError::FailedToFillTxBuffer)?;
 
-        match block!(self.uart.flush()) {
-            Ok(_) => {}
-            Err(_) => {
-                println!("failed to flush");
-                return Err(CctalkTransmissionError::FailedToTxData);
-            }
-        }
-        self.delay.delay_ms(10);
         if self.echo {
             match self.read_exact(timeout_ms, msg_bytes.len()) {
                 Ok(rx_msg) => {
@@ -73,7 +67,7 @@ where
     ) -> Result<CctalkMessage, CctalkMessageError> {
         let mut n = 0_usize;
         let mut rx_buf: [u8; 260] = [0u8; 260];
-        const POLL_INTERVAL_MS: u32 = 1_u32;
+        const POLL_INTERVAL_MS: u32 = 5_u32;
         let mut elapsed_ms = 0_u32;
         loop {
             match self.uart.read() {
