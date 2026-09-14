@@ -20,6 +20,7 @@ where
         Self { uart, delay, echo }
     }
 
+    pub fn read_bytes()
 
     //INFO: orginally had a write flush in here, which produced weird inconsistent results when
     //reading the echo
@@ -36,9 +37,8 @@ where
         if self.echo {
             match self.read_exact(timeout_ms, msg_bytes.len()) {
                 Ok(rx_msg) => {
-                    if rx_msg == msg {
-                        println!("echo matches, discarding");
-                    } else {
+                    if rx_msg != msg {
+                    
                         println!("echo does not match");
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     }
@@ -135,7 +135,7 @@ where
     ) -> Result<hVec<u8, 260>, embedded_hal_nb::serial::ErrorKind> {
         let msg_bytes = msg.try_to_bytes().map_err(|_e| serial::ErrorKind::Other)?;
 
-        println!("sending: {:02x?}", msg_bytes);
+        // println!("sending: {:02x?}", msg_bytes);
 
         for dat in msg_bytes.as_slice() {
             block!(self.uart.write(*dat)).map_err(|_e| serial::ErrorKind::Other)?;
