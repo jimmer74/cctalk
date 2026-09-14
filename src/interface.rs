@@ -27,7 +27,7 @@ where
         msg: CctalkMessage,
         timeout_ms: u32,
     ) -> Result<CctalkMessage, CctalkTransmissionError> {
-        let _msg_bytes = self
+        let msg_bytes = self
             .write(msg.clone())
             .map_err(|_e| CctalkTransmissionError::FailedToFillTxBuffer)?;
 
@@ -41,7 +41,7 @@ where
         }
         self.delay.delay_ms(10);
         if self.echo {
-            match self.read(timeout_ms) {
+            match self.read_exact(timeout_ms, msg_bytes.len()) {
                 Ok(rx_msg) => {
                     if rx_msg == msg {
                         println!("echo matches, discarding");
