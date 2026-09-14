@@ -25,37 +25,40 @@ where
     pub fn transfer(
         &mut self,
         msg: CctalkMessage,
+        timeout_ms: u32,
     ) -> Result<CctalkMessage, CctalkTransmissionError> {
         let _msg_bytes = self
             .write(msg.clone())
             .map_err(|_e| CctalkTransmissionError::FailedToFillTxBuffer)?;
 
-        println!("flushing buffer");
+        // println!("flushing buffer");
         match block!(self.uart.flush()) {
-            Ok(_) => println!("successfully flushed"),
+            Ok(_) => {} // println!("successfully flushed"),
             Err(_) => {
-                println!("failed to flush");
+                // println!("failed to flush");
                 return Err(CctalkTransmissionError::FailedToTxData);
             }
         }
         self.delay.delay_ms(10);
         if self.echo {
-            match self.read(CCTALK_TIMEOUT_MS) {
+            match self.read(timeout_ms) {
                 Ok(rx_msg) => {
                     if rx_msg == msg {
                         println!("echo matches, discarding");
                     } else {
+                        println!("echo does not match");
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     }
                 }
-                Err(_e) => {
+                Err(e) => {
+                    println!("read error: {}", e);
                     return Err(CctalkTransmissionError::FailedToReciveEcho);
                 }
             }
         }
 
         let msg = self
-            .read(CCTALK_TIMEOUT_MS)
+            .read(timeout_ms)
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         // let _data_len = msg
