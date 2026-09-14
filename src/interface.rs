@@ -71,7 +71,44 @@ where
 
         Ok(msg)
     }
+    pub fn read_exact(
+        &mut self,
+        timeout_ms: u32,
+        num_bytes: usize,
+    ) -> Result<CctalkMessage, CctalkMessageError> {
+        let mut n = 0_usize;
+        let mut rx_buf: [u8; 260] = [0u8; 260];
+        const POLL_INTERVAL_MS: u32 = 1_u32;
+        let mut elapsed_ms = 0_u32;
+        loop {
+            match self.uart.read() {
+                Ok(byte) => {
+                    // println!("rx: {:02x?}, byte no: {}", byte, n);
+                    rx_buf[n] = byte;
+                    n = n + 1;
 
+                    if n == num_bytes {
+                        break;
+                    }
+                }
+                Err(nb::Error::WouldBlock) => {
+                    self.delay.delay_ms(POLL_INTERVAL_MS);
+                    elapsed_ms += POLL_INTERVAL_MS;
+
+                    if elapsed_ms >= timeout_ms {
+                        break;
+                    }
+                    continue;
+                }
+                Err(nb::Error::Other(_e)) => {
+                    break; //writelnreturn // println!("{:?}", e);
+                }
+            }
+        }
+
+        CctalkMessage::try_from_bytes(&rx_buf[0..n])
+        // .map_err(|_e| embedded_hal_nb::serial::ErrorKind::Other)
+    }
     pub fn read(&mut self, timeout_ms: u32) -> Result<CctalkMessage, CctalkMessageError> {
         let mut n = 0_usize;
         let mut rx_buf: [u8; 260] = [0u8; 260];
