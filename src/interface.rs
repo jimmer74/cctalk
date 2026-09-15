@@ -1,11 +1,12 @@
 use super::message::CctalkMessage;
+use super::headers::CcTalkHeader;
 use crate::errors::CctalkTransmissionError;
 use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
 use heapless::Vec as hVec;
 use nb::block;
 
-const ADDR_POL: [u8; 5] = [001, 000, 040, 000, 215];
+const ADDR_POL: [u8; 5] = [000, 000, 001, CcTalkHeader::AddressPoll as u8, 002];
 pub struct Cctalk<UART, DELAY> {
     uart: UART,
     delay: DELAY,
@@ -65,13 +66,26 @@ where
         Ok(msg)
     }
 
-    pub fn addr_scan(&mut self, timeout_ms: u32) -> Result<hVec<u8, 260>, ()> {
+    pub fn addr_scan(&mut self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let tx = CctalkMessage::try_from_bytes(&ADDR_POL).unwrap();
-        let _ = self.write_msg(tx);
+        let _ = self.write_msg(tx.clone());
+
+        if self.echo {
+            match self.read_msg_exact(20, tx.len() as usize) {
+                Ok(rx_msg) => {
+                    if rx_msg != tx {
+                        return Err(CctalkTransmissionError::FailedToReciveEcho);
+                    }
+                }
+                Err(e) => {
+                    return Err(CctalkTransmissionError::CctalkSerialReadError);
+                }
+            }
+        }
 
         match self.read_bytes(timeout_ms) {
             Ok(bytes) => return Ok(bytes),
-            Err(_e) => return Err(()),
+            Err(e) => return Err(e),
         }
     }
 
