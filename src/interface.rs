@@ -1,6 +1,6 @@
 use super::headers::CcTalkHeader;
 use super::message::CctalkMessage;
-use crate::errors::CctalkTransmissionError;
+use crate::{DEFAULT_TIMEOUT_MS, MASTER_ADDR, errors::CctalkTransmissionError};
 use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
 use heapless::Vec as hVec;
@@ -37,13 +37,27 @@ where
      *
      *****************************************************************/
 
+    pub fn header_only(
+        &mut self,
+        addr: u8,
+        header: CcTalkHeader,
+        timeout_ms: Option<u32>,
+    ) -> Result<CctalkMessage, CctalkTransmissionError> {
+        let msg = CctalkMessage::new(addr, MASTER_ADDR, header, hVec::new());
+        let res = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
+        let header = res.header();
+        if header != CcTalkHeader::Ack {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+        };
+        Ok(res)
+    }
+
     pub fn transfer(
         &mut self,
         msg: CctalkMessage,
         timeout_ms: u32,
     ) -> Result<CctalkMessage, CctalkTransmissionError> {
         let msg_bytes = self.write_msg(msg.clone())?;
-
         if self.echo {
             match self.read_msg_exact(timeout_ms, msg_bytes.len()) {
                 Ok(rx_msg) => {
@@ -266,8 +280,9 @@ where
 #[allow(unused)]
 mod tests {
     use super::*;
-    use crate::errors::*;
+    use crate::device::CctalkDevice;
     use crate::headers::CcTalkHeader;
+    use crate::{errors::*, headers::CcTalkHeader::Ack};
     use embedded_hal::delay::DelayNs;
     use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
     use nb::Error::WouldBlock;
@@ -285,6 +300,49 @@ mod tests {
     }
 
     use heapless::Vec as hVec;
+
+    #[test]
+    fn test_header_only_send() {
+        const NOTE_ACC_ADDR: u8 = 0x28;
+
+        let tx_msg = CctalkMessage::new(
+            NOTE_ACC_ADDR,
+            MASTER_ADDR,
+            CcTalkHeader::SimplePoll,
+            hVec::new(),
+        );
+
+        let rx_na_bytes = [MASTER_ADDR, 0x00, NOTE_ACC_ADDR, Ack as u8, 215];
+
+        let expectations = [
+            //Note Acceptor
+            UartTransaction::write_many(tx_msg.try_to_bytes().unwrap()),
+            UartTransaction::read_many(tx_msg.try_to_bytes().unwrap()),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_many(&rx_na_bytes),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_error(WouldBlock),
+        ];
+
+        let mut uart = UartMock::new(&expectations);
+        let timer = MockDelay {
+            total_ms_delayed: 0,
+        };
+        let mut cctalk = Cctalk::new(uart.clone(), timer, true);
+
+        let res = cctalk.header_only(NOTE_ACC_ADDR, CcTalkHeader::SimplePoll, Some(5));
+        println!("{:?}", res);
+        assert_eq!(
+            res.unwrap(),
+            CctalkMessage::try_from_bytes(&rx_na_bytes).unwrap(),
+        );
+        //
+        // dev.probe(&mut cctalk)
+        //
+        uart.done();
+    }
 
     #[test]
     fn test_read_bytes_exact() {

@@ -136,8 +136,8 @@ impl CctalkMessage {
     pub fn data(self: &Self) -> &hVec<u8, 255> {
         &self.data
     }
-    pub fn header(self: &Self) -> u8 {
-        self.header
+    pub fn header(self: &Self) -> CcTalkHeader {
+        self.header.into()
     }
 
     pub fn len(self: &Self) -> u8 {

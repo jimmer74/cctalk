@@ -1,48 +1,66 @@
 use super::interface::Cctalk;
 use crate::{
-    device::CctalkDeviceKind::NoteAcceptor, errors::CctalkTransmissionError,
-    headers::CcTalkHeader::SimplePoll, message::CctalkMessage,
+    errors::CctalkTransmissionError,
+    headers::CcTalkHeader::{self, RequestEquipmentCategory, RequestManufacturerId, SimplePoll},
+    message::CctalkMessage,
 };
 use embedded_hal::delay::DelayNs;
 use heapless::Vec as hVec;
 
 use embedded_hal_nb::serial::{Read, Write};
-#[derive(Debug)]
-struct CctalkDevice {
+#[derive(Debug, Default)]
+pub struct CctalkDevice {
     addr: u8,
-    kind: CctalkDeviceKind,
+    kind: Option<CctalkDeviceKind>,
+    manu: String,
+    model: String,
 }
 
 impl CctalkDevice {
     pub fn new(addr: u8) -> CctalkDevice {
         Self {
             addr,
-            kind: CctalkDeviceKind::from(addr),
+            ..Default::default()
         }
     }
 
     pub fn probe<UART, DELAY>(
-        &self,
+        &mut self,
         cctalk: &mut Cctalk<UART, DELAY>,
     ) -> Result<(), CctalkTransmissionError>
     where
         DELAY: DelayNs,
         UART: Read + Write,
     {
-        let msg = CctalkMessage::new(self.addr, 0x01, SimplePoll, hVec::new());
+        //Simple Poll
+        let mut res = cctalk.header_only(self.addr, SimplePoll, None)?;
+        _ = res;
 
-        match cctalk.transfer(msg, 20) {
-            Ok(res) => {
-                println!(
-                    "addr: {}, Dev kind: {}, simple poll res: {}",
-                    self.addr, self.kind, res
-                );
-                Ok(())
-            }
-            Err(e) => return Err(e),
+        //Device type
+        //TODO: Bail early if info not avail
+        res = cctalk.header_only(self.addr, RequestEquipmentCategory, None)?;
+
+        self.kind = match CctalkDeviceKind::from(res.data().as_slice()) {
+            CctalkDeviceKind::Unknown => None,
+            k => Some(k),
+        };
+
+        if self.kind.is_none() {
+            return Err(CctalkTransmissionError::CctalkDeviceTypeUnknown);
         }
+
+        //Manufacturer
+        res = cctalk.header_only(self.addr, RequestManufacturerId, None)?;
+        self.manu = String::from_utf8(res.data().to_vec()).unwrap();
+
+        //Model
+        res = cctalk.header_only(self.addr, CcTalkHeader::RequestProductCode, None)?;
+        self.model = String::from_utf8(res.data().to_vec()).unwrap();
+
+        Ok(())
     }
 }
+
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum CctalkDeviceKind {
     Coinmech,      // 002, 011-017
@@ -57,7 +75,7 @@ impl core::fmt::Display for CctalkDeviceKind {
         let msg = match self {
             CctalkDeviceKind::Coinmech => "Coinmech",
             CctalkDeviceKind::Hopper => "Hopper",
-            NoteAcceptor => "Note Acceptor",
+            CctalkDeviceKind::NoteAcceptor => "Note Acceptor",
             CctalkDeviceKind::TicketPrinter => "Ticket Printer",
             CctalkDeviceKind::Unknown => "Unknown/Unimplemented Device",
         };
@@ -92,7 +110,24 @@ impl From<u8> for CctalkDeviceKind {
 
 mod tests {
     use super::*;
+    use crate::message::CctalkMessage;
+    use embedded_hal::delay::DelayNs;
+    use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
     use heapless::Vec as hVec;
+    use nb::Error::WouldBlock;
+
+    #[derive(Debug)]
+    struct MockDelay {
+        pub total_ms_delayed: u32,
+    }
+    impl DelayNs for MockDelay {
+        fn delay_ns(&mut self, ns: u32) {
+            self.total_ms_delayed += ns / 1_000_000;
+        }
+        fn delay_ms(&mut self, ms: u32) {
+            self.total_ms_delayed += ms;
+        }
+    }
 
     #[test]
     fn test_cctalkdevicekind_from_u8() {
@@ -112,90 +147,7 @@ mod tests {
 
         assert_eq!(result, expected);
     }
-
-    #[test]
-    fn test_cctalkdevice_send() {
-        use crate::message::CctalkMessage;
-        use embedded_hal::delay::DelayNs;
-        use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
-        use nb::Error::WouldBlock;
-
-        use embedded_io::{Read, Write};
-        #[derive(Debug)]
-        struct MockDelay {
-            pub total_ms_delayed: u32,
-        }
-        impl DelayNs for MockDelay {
-            fn delay_ns(&mut self, ns: u32) {
-                self.total_ms_delayed += ns / 1_000_000;
-            }
-            fn delay_ms(&mut self, ms: u32) {
-                self.total_ms_delayed += ms;
-            }
-        }
-
-        const COINMECH_ADDR: u8 = 0x02;
-        const NOTE_ACC_ADDR: u8 = 0x28;
-
-        let tx_cm_case = CctalkMessage::new(
-            COINMECH_ADDR,
-            0x01,
-            crate::headers::CcTalkHeader::SimplePoll,
-            hVec::new(),
-        );
-
-        let tx_na_case = CctalkMessage::new(
-            NOTE_ACC_ADDR,
-            0x01,
-            crate::headers::CcTalkHeader::SimplePoll,
-            hVec::new(),
-        );
-
-        let rx_cm_bytes = [0x01, 0x00, 0x02, 0x00, 0xFD];
-        let rx_na_bytes = [0x01, 0x00, 0x28, 0x00, 0xD7];
-
-        let expectations = [
-            //Coin Mech
-            UartTransaction::write_many(tx_cm_case.try_to_bytes().unwrap()),
-            UartTransaction::read_many(tx_cm_case.try_to_bytes().unwrap()),
-            UartTransaction::read_error(WouldBlock),
-            UartTransaction::read_many(rx_cm_bytes),
-            UartTransaction::read_error(WouldBlock),
-            //Note Acceptor
-            UartTransaction::write_many(tx_na_case.try_to_bytes().unwrap()),
-            UartTransaction::read_many(tx_na_case.try_to_bytes().unwrap()),
-            UartTransaction::read_error(WouldBlock),
-            UartTransaction::read_many(rx_na_bytes),
-            UartTransaction::read_error(WouldBlock),
-        ];
-
-        let mut uart = UartMock::new(&expectations);
-        let timer = MockDelay {
-            total_ms_delayed: 0,
-        };
-        let mut cctalk = Cctalk::new(uart.clone(), timer, true);
-
-        let cm_dev = CctalkDevice::new(COINMECH_ADDR);
-        let na_dev = CctalkDevice::new(NOTE_ACC_ADDR);
-        // assert_eq!(dev.kind, CctalkDeviceKind::Coinmech);
-        cm_dev.probe(&mut cctalk);
-        let cm_res = cctalk.transfer(tx_cm_case, 2);
-        let na_res = cctalk.transfer(tx_na_case, 2);
-
-        assert_eq!(
-            cm_res.unwrap(),
-            CctalkMessage::try_from_bytes(&rx_cm_bytes).unwrap()
-        );
-
-        assert_eq!(
-            na_res.unwrap(),
-            CctalkMessage::try_from_bytes(&rx_na_bytes).unwrap()
-        );
-
-        uart.done();
-    }
 }
-
 // Coin Acceptor 2 11 to 17 a.k.a Coin Validator
 // Payout 3 4 to 10 a.k.a Hopper
 // Reel 30 31 to 34

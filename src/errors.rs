@@ -1,6 +1,8 @@
 use std::fmt::Debug;
 use thiserror::Error;
 
+use crate::headers::CcTalkHeader;
+
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum CctalkMessageError {
     #[error("Wrong data length: {0}, should be: {1}")]
@@ -33,4 +35,8 @@ pub enum CctalkTransmissionError {
     CctalkSerialWriteError,
     #[error("Cctalk serial read error")]
     CctalkSerialReadError,
+    #[error("Failed to Ack. Response: {0}")]
+    CctalkFailedToAck(CcTalkHeader),
+    #[error("Device Type Unknown")]
+    CctalkDeviceTypeUnknown,
 }
