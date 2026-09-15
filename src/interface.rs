@@ -1,5 +1,5 @@
-use super::message::CctalkMessage;
 use super::headers::CcTalkHeader;
+use super::message::CctalkMessage;
 use crate::errors::CctalkTransmissionError;
 use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
@@ -7,6 +7,8 @@ use heapless::Vec as hVec;
 use nb::block;
 
 const ADDR_POL: [u8; 5] = [000, 000, 001, CcTalkHeader::AddressPoll as u8, 002];
+
+#[derive(Debug, PartialEq, PartialOrd)]
 pub struct Cctalk<UART, DELAY> {
     uart: UART,
     delay: DELAY,
@@ -77,7 +79,7 @@ where
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     }
                 }
-                Err(e) => {
+                Err(_e) => {
                     return Err(CctalkTransmissionError::CctalkSerialReadError);
                 }
             }
@@ -268,13 +270,11 @@ mod tests {
     use crate::headers::CcTalkHeader;
     use embedded_hal::delay::DelayNs;
     use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
-    use heapless::Vec as hVec;
     use nb::Error::WouldBlock;
 
     struct MockDelay {
         pub total_ms_delayed: u32,
     }
-
     impl DelayNs for MockDelay {
         fn delay_ns(&mut self, ns: u32) {
             self.total_ms_delayed += ns / 1_000_000;
@@ -283,6 +283,8 @@ mod tests {
             self.total_ms_delayed += ms;
         }
     }
+
+    use heapless::Vec as hVec;
 
     #[test]
     fn test_read_bytes_exact() {
