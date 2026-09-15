@@ -1,3 +1,5 @@
+use std::fmt::write;
+
 use super::errors::CctalkMessageError;
 use super::headers::CcTalkHeader;
 use heapless::Vec as hVec;
@@ -12,7 +14,20 @@ pub struct CctalkMessage {
     len: u8,
     chksum: Option<u8>,
 }
-
+impl core::fmt::Display for CctalkMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = format!(
+            "From: {}\nData Len: {}\nTo: {}\nHeader: {}\nData: {:?}\nChksum: {:?} ",
+            self.src,
+            self.len,
+            self.dest,
+            CcTalkHeader::try_from(self.header).unwrap(),
+            self.data.to_vec(),
+            self.chksum
+        );
+        write!(f, "{}", msg)
+    }
+}
 #[allow(dead_code)]
 impl CctalkMessage {
     //length and chksum are calced from supplied data (source, dest, header, data).
