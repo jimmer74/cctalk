@@ -23,7 +23,6 @@ dependencies = [
  "embedded-hal-nb",
  "embedded-io",
  "heapless",
- "mock-embedded-io",
  "nb 1.1.0",
  "thiserror",
 ]
@@ -75,15 +74,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
-name = "embedded-io-async"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ff09972d4073aa8c299395be75161d582e7629cd663171d62af73c8d50dba3f"
-dependencies = [
- "embedded-io",
-]
-
-[[package]]
 name = "embedded-time"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -109,16 +99,6 @@ checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
 dependencies = [
  "hash32",
  "stable_deref_trait",
-]
-
-[[package]]
-name = "mock-embedded-io"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b679685c6be3ea04aa874c5f8882da6ccf0b1bb369c24e019dcde94fc709365"
-dependencies = [
- "embedded-io",
- "embedded-io-async",
 ]
 
 [[package]]
