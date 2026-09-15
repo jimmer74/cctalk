@@ -1,5 +1,3 @@
-use embedded_hal_nb::serial::Error as nbError;
-use embedded_hal_nb::serial::ErrorKind;
 use std::fmt::Debug;
 use thiserror::Error;
 
@@ -19,17 +17,9 @@ pub enum CctalkMessageError {
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum CctalkTransmissionError {
-    #[error("Failed to tx cctalk data")]
-    FailedToTxData,
     #[error("failed to receive tx echo")]
     FailedToReciveEcho,
-    #[error("failed to fill tx_buffer")]
-    FailedToFillTxBuffer,
-    #[error("failed to convert rx data to msg")]
-    FailedToConvertToMessage,
     #[error("Rx data err")]
-    FailedToRxData,
-    #[error("Rx data wrong len")]
     RxDataMalformedLength,
     #[error("Rx data wrong chksum")]
     RxDataMalformedChksum,
@@ -39,13 +29,8 @@ pub enum CctalkTransmissionError {
     UnknownError,
     #[error("Message error: {0}")]
     CctalkMessageError(CctalkMessageError),
+    #[error("Cctalk serial write error")]
+    CctalkSerialWriteError,
+    #[error("Cctalk serial read error")]
+    CctalkSerialReadError,
 }
-// Implement embedded-hal's serial error trait
-impl nbError for CctalkTransmissionError {
-    fn kind(&self) -> ErrorKind {
-        // Map your internal variants or default to Other
-        ErrorKind::Other
-    }
-}
-
-// impl ErrorKind for CctalkTransmissionError {}

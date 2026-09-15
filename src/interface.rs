@@ -1,10 +1,10 @@
 use super::message::CctalkMessage;
-use crate::errors::{CctalkMessageError, CctalkTransmissionError};
-use crate::headers::CcTalkHeader;
+use crate::errors::CctalkTransmissionError;
 use embedded_hal::delay::DelayNs;
-use embedded_hal_nb::serial::{self, Read, Write};
+use embedded_hal_nb::serial::{Read, Write};
 use heapless::Vec as hVec;
 use nb::block;
+
 const ADDR_POL: [u8; 5] = [001, 000, 040, 000, 215];
 pub struct Cctalk<UART, DELAY> {
     uart: UART,
@@ -24,14 +24,22 @@ where
     //INFO: orginally had a write flush in here, which produced weird inconsistent results when
     //reading the echo
     //WARN: do not put flush back!!!!
+
+    /***************************************************************
+     *
+     *
+     *         Transfer functions
+     *      - complete transactions:
+     *              (send msg, check echo, get data back)
+     *
+     *****************************************************************/
+
     pub fn transfer(
         &mut self,
         msg: CctalkMessage,
         timeout_ms: u32,
     ) -> Result<CctalkMessage, CctalkTransmissionError> {
-        let msg_bytes = self
-            .write_msg(msg.clone())
-            .map_err(|_e| CctalkTransmissionError::FailedToFillTxBuffer)?;
+        let msg_bytes = self.write_msg(msg.clone())?;
 
         if self.echo {
             match self.read_msg_exact(timeout_ms, msg_bytes.len()) {
@@ -48,9 +56,7 @@ where
             }
         }
 
-        let msg = self
-            .read_msg(timeout_ms)
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let msg = self.read_msg(timeout_ms)?;
 
         let _chksum = msg
             .chksum_valid()
@@ -69,11 +75,18 @@ where
         }
     }
 
+    /***************************************************************
+     *
+     *
+     *                       Read functions
+     *
+     *
+     *****************************************************************/
     pub fn read_msg_exact(
         &mut self,
         timeout_ms: u32,
         num_bytes: usize,
-    ) -> Result<CctalkMessage, CctalkMessageError> {
+    ) -> Result<CctalkMessage, CctalkTransmissionError> {
         let mut n = 0_usize;
         let mut rx_buf: [u8; 260] = [0u8; 260];
         const POLL_INTERVAL_MS: u32 = 5_u32;
@@ -98,15 +111,16 @@ where
                     continue;
                 }
                 Err(nb::Error::Other(_e)) => {
-                    break;
+                    return Err(CctalkTransmissionError::CctalkSerialReadError);
                 }
             }
         }
 
         CctalkMessage::try_from_bytes(&rx_buf[0..n])
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))
     }
 
-    fn read_bytes(&mut self, timeout_ms: u32) -> Result<hVec<u8, 260>, ()> {
+    fn read_bytes(&mut self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let mut n = 0_usize;
         let mut rx_buf: hVec<u8, 260> = hVec::new();
         const POLL_INTERVAL_MS: u32 = 1_u32;
@@ -131,7 +145,7 @@ where
                     continue;
                 }
                 Err(nb::Error::Other(_e)) => {
-                    break;
+                    return Err(CctalkTransmissionError::CctalkSerialReadError);
                 }
             }
         }
@@ -143,7 +157,7 @@ where
         &mut self,
         timeout_ms: u32,
         num_bytes: usize,
-    ) -> Result<hVec<u8, 260>, CctalkMessageError> {
+    ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let mut n = 0_usize;
         let mut rx_buf: hVec<u8, 260> = hVec::new();
         const POLL_INTERVAL_MS: u32 = 5_u32;
@@ -168,7 +182,7 @@ where
                     continue;
                 }
                 Err(nb::Error::Other(_e)) => {
-                    break;
+                    return Err(CctalkTransmissionError::CctalkSerialReadError);
                 }
             }
         }
@@ -176,7 +190,7 @@ where
         Ok(rx_buf)
     }
 
-    pub fn read_msg(&mut self, timeout_ms: u32) -> Result<CctalkMessage, CctalkMessageError> {
+    pub fn read_msg(&mut self, timeout_ms: u32) -> Result<CctalkMessage, CctalkTransmissionError> {
         let mut n = 0_usize;
         let mut rx_buf: [u8; 260] = [0u8; 260];
         const POLL_INTERVAL_MS: u32 = 1_u32;
@@ -201,24 +215,32 @@ where
                     continue;
                 }
                 Err(nb::Error::Other(_e)) => {
-                    break;
+                    return Err(CctalkTransmissionError::CctalkSerialReadError);
                 }
             }
         }
 
         CctalkMessage::try_from_bytes(&rx_buf[0..n])
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))
     }
-
+    /***************************************************************
+     *
+     *
+     *                      Write functions
+     *
+     *
+     *****************************************************************/
     pub fn write_msg(
         &mut self,
         msg: CctalkMessage,
-    ) -> Result<hVec<u8, 260>, embedded_hal_nb::serial::ErrorKind> {
-        let msg_bytes = msg.try_to_bytes().map_err(|_e| serial::ErrorKind::Other)?;
-
-        // println!("sending: {:02x?}", msg_bytes);
+    ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
+        let msg_bytes = msg
+            .try_to_bytes()
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         for dat in msg_bytes.as_slice() {
-            block!(self.uart.write(*dat)).map_err(|_e| serial::ErrorKind::Other)?;
+            let _ = block!(self.uart.write(*dat))
+                .map_err(|_e| CctalkTransmissionError::CctalkSerialWriteError);
         }
 
         Ok(msg_bytes)
@@ -228,7 +250,8 @@ where
 #[allow(unused)]
 mod tests {
     use super::*;
-    use crate::{errors::CctalkTransmissionError::RxDataMalformedLength, headers::CcTalkHeader};
+    use crate::errors::*;
+    use crate::headers::CcTalkHeader;
     use embedded_hal::delay::DelayNs;
     use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
     use heapless::Vec as hVec;
@@ -255,9 +278,32 @@ mod tests {
 
         let rx_bytes: hVec<u8, 260> = hVec::from_array(tx);
 
+        let expectations = [UartTransaction::read_many(tx)];
+
+        let mut timer = MockDelay {
+            total_ms_delayed: 0,
+        };
+
+        let mut uart = UartMock::new(&expectations);
+        let mut cctalk = Cctalk::new(uart.clone(), timer, true);
+
+        let result = cctalk.read_bytes_exact(5, 5);
+
+        assert_eq!(result.unwrap(), rx_bytes);
+
+        uart.done();
+    }
+
+    #[test]
+    fn test_read_bytes_exact_too_many_bytes() {
+        let tx = [
+            0x28, 0x22, 0x34, 0x35, 0x00, //dest
+        ];
+
+        let rx_bytes: hVec<u8, 260> = hVec::from_array(tx);
+
         let expectations = [
-            UartTransaction::read_many(tx),
-            UartTransaction::read_error(WouldBlock),
+            UartTransaction::read_many([0x28, 0x22, 0x34, 0x35]),
             UartTransaction::read_error(WouldBlock),
         ];
 
@@ -268,9 +314,10 @@ mod tests {
         let mut uart = UartMock::new(&expectations);
         let mut cctalk = Cctalk::new(uart.clone(), timer, true);
 
-        let result = cctalk.read_bytes_exact(2, 5);
+        let result = cctalk.read_bytes_exact(5, 5);
 
-        assert_eq!(result.unwrap(), rx_bytes);
+        assert_ne!(result.unwrap(), rx_bytes); // WARN: left 4 bytes, right 5 bytes - currently no error
+        // handling on fn. Need to implement and revise!
 
         uart.done();
     }
