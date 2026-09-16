@@ -9,7 +9,7 @@ use embedded_hal_nb::serial::{Read, Write};
 #[derive(Debug, Default)]
 pub struct CctalkDevice {
     addr: u8,
-    kind: Option<CctalkDeviceKind>,
+    kind: CctalkDeviceKind,
     manu: String,
     model: String,
 }
@@ -33,20 +33,17 @@ impl CctalkDevice {
         //Simple Poll
         let mut res = cctalk.header_only(self.addr, SimplePoll, None)?;
         _ = res;
-       
+
         //Device type
         //TODO: Bail early if info not avail
         res = cctalk.header_only(self.addr, RequestEquipmentCategory, None)?;
         // println!("Device type: {}", unsafe {
-            // String::from_utf8_unchecked(res.data().to_vec())
+        // String::from_utf8_unchecked(res.data().to_vec())
         // });
-        
-        self.kind = match CctalkDeviceKind::from(res.data().as_slice()) {
-            CctalkDeviceKind::Unknown => None,
-            k => Some(k),
-        };
 
-        if self.kind.is_none() {
+        self.kind = CctalkDeviceKind::from(res.data().as_slice());
+
+        if self.kind == CctalkDeviceKind::Unknown {
             return Err(CctalkTransmissionError::CctalkDeviceTypeUnknown);
         }
 
@@ -62,13 +59,14 @@ impl CctalkDevice {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Default, Debug, Clone, PartialEq, PartialOrd)]
 pub enum CctalkDeviceKind {
     Coinmech,      // 002, 011-017
     Hopper,        // 003-010
     NoteAcceptor,  //040-0470
     TicketPrinter, //110
-    Unknown,       //all others
+    #[default]
+    Unknown, //all others
 }
 
 impl core::fmt::Display for CctalkDeviceKind {
