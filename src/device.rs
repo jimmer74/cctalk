@@ -2,10 +2,8 @@ use super::interface::Cctalk;
 use crate::{
     errors::CctalkTransmissionError,
     headers::CcTalkHeader::{self, RequestEquipmentCategory, RequestManufacturerId, SimplePoll},
-    message::CctalkMessage,
 };
 use embedded_hal::delay::DelayNs;
-use heapless::Vec as hVec;
 
 use embedded_hal_nb::serial::{Read, Write};
 #[derive(Debug, Default)]
@@ -35,11 +33,14 @@ impl CctalkDevice {
         //Simple Poll
         let mut res = cctalk.header_only(self.addr, SimplePoll, None)?;
         _ = res;
-
+       
         //Device type
         //TODO: Bail early if info not avail
         res = cctalk.header_only(self.addr, RequestEquipmentCategory, None)?;
-
+        // println!("Device type: {}", unsafe {
+            // String::from_utf8_unchecked(res.data().to_vec())
+        // });
+        
         self.kind = match CctalkDeviceKind::from(res.data().as_slice()) {
             CctalkDeviceKind::Unknown => None,
             k => Some(k),
@@ -87,7 +88,22 @@ impl core::fmt::Display for CctalkDeviceKind {
 impl From<&[u8]> for CctalkDeviceKind {
     fn from(value: &[u8]) -> Self {
         match value {
-            [66, 105, 108, 108, 32, 65, 99, 99, 101, 112, 116, 111, 114] => Self::NoteAcceptor,
+            [
+                66,
+                105,
+                108,
+                108,
+                32,
+                86,
+                97,
+                108,
+                105,
+                100,
+                97,
+                116,
+                111,
+                114,
+            ] => Self::NoteAcceptor,
             [67, 111, 105, 110, 32, 65, 99, 99, 101, 112, 116, 111, 114] => Self::Coinmech,
             [80, 97, 121, 111, 117, 116] => Self::Hopper,
             [80, 114, 105, 110, 116, 101, 114] => Self::TicketPrinter,
@@ -109,35 +125,33 @@ impl From<u8> for CctalkDeviceKind {
 }
 
 mod tests {
-    use super::*;
-    use crate::message::CctalkMessage;
-    use embedded_hal::delay::DelayNs;
-    use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
-    use heapless::Vec as hVec;
-    use nb::Error::WouldBlock;
+    // use embedded_hal::delay::DelayNs;
+    // use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
 
-    #[derive(Debug)]
-    struct MockDelay {
-        pub total_ms_delayed: u32,
-    }
-    impl DelayNs for MockDelay {
-        fn delay_ns(&mut self, ns: u32) {
-            self.total_ms_delayed += ns / 1_000_000;
-        }
-        fn delay_ms(&mut self, ms: u32) {
-            self.total_ms_delayed += ms;
-        }
-    }
+    // #[derive(Debug)]
+    // struct MockDelay {
+    //     pub total_ms_delayed: u32,
+    // }
+    // impl DelayNs for MockDelay {
+    //     fn delay_ns(&mut self, ns: u32) {
+    //         self.total_ms_delayed += ns / 1_000_000;
+    //     }
+    //     fn delay_ms(&mut self, ms: u32) {
+    //         self.total_ms_delayed += ms;
+    //     }
+    // }
 
     #[test]
     fn test_cctalkdevicekind_from_u8() {
+        use super::CctalkDeviceKind;
+        use heapless::Vec as hVec;
         let input: [u8; 5] = [110, 018, 002, 042, 007];
         let expected: hVec<CctalkDeviceKind, 5> = hVec::from_array([
-            self::CctalkDeviceKind::TicketPrinter,
-            self::CctalkDeviceKind::Unknown,
-            self::CctalkDeviceKind::Coinmech,
-            self::CctalkDeviceKind::NoteAcceptor,
-            self::CctalkDeviceKind::Hopper,
+            CctalkDeviceKind::TicketPrinter,
+            CctalkDeviceKind::Unknown,
+            CctalkDeviceKind::Coinmech,
+            CctalkDeviceKind::NoteAcceptor,
+            CctalkDeviceKind::Hopper,
         ]);
         let mut result: hVec<CctalkDeviceKind, 5> = hVec::new();
 

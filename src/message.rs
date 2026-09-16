@@ -1,5 +1,3 @@
-use std::fmt::write;
-
 use super::errors::CctalkMessageError;
 use super::headers::CcTalkHeader;
 use heapless::Vec as hVec;
@@ -57,7 +55,7 @@ impl CctalkMessage {
 
         if packet_len <= 4 {
             println!(
-                "packket too short! Actual packet len: {}, packet: {:02X?}",
+                "packet too short! Actual packet len: {}, packet: {:02X?}",
                 packet_len,
                 &data[..]
             );
@@ -66,7 +64,7 @@ impl CctalkMessage {
 
         if data[1] as usize + 5 != packet_len {
             println!(
-                "actual packet len: {}, calculated packet len: {}, packet: {:02X?}",
+                "actual packet len: {}, calculated packet len: {}, \npacket: {:02X?}",
                 packet_len,
                 data[1] + 5,
                 &data[..]
@@ -142,6 +140,10 @@ impl CctalkMessage {
 
     pub fn len(self: &Self) -> u8 {
         self.data.len() as u8
+    }
+
+    pub fn packet_len(self: &Self) -> usize {
+        self.data.len() as usize + 1 + 1 + 1 + 1 + 1
     }
 
     pub fn chksum(self: &Self) -> Option<u8> {

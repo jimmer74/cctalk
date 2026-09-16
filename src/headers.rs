@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Hash)]
 #[repr(u8)]
 pub enum CcTalkHeader {

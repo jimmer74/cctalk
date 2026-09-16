@@ -61,6 +61,7 @@ where
         if self.echo {
             match self.read_msg_exact(timeout_ms, msg_bytes.len()) {
                 Ok(rx_msg) => {
+                    // println!("echo matches - discarding!");
                     if rx_msg != msg {
                         println!("echo does not match");
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
@@ -87,7 +88,7 @@ where
         let _ = self.write_msg(tx.clone());
 
         if self.echo {
-            match self.read_msg_exact(20, tx.len() as usize) {
+            match self.read_msg_exact(20, tx.packet_len()) {
                 Ok(rx_msg) => {
                     if rx_msg != tx {
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
@@ -117,17 +118,18 @@ where
         timeout_ms: u32,
         num_bytes: usize,
     ) -> Result<CctalkMessage, CctalkTransmissionError> {
-        let mut n = 0_usize;
-        let mut rx_buf: [u8; 260] = [0u8; 260];
+        // let mut n = 0_usize;
+        let mut rx_buf: hVec<u8, 260> = hVec::new();
         const POLL_INTERVAL_MS: u32 = 5_u32;
         let mut elapsed_ms = 0_u32;
+        if num_bytes <= 4 {
+            return Err(CctalkTransmissionError::RxDataMalformedLength);
+        }
         loop {
             match self.uart.read() {
                 Ok(byte) => {
-                    rx_buf[n] = byte;
-                    n = n + 1;
-
-                    if n == num_bytes {
+                    _ = rx_buf.push(byte);
+                    if rx_buf.len() == num_bytes {
                         break;
                     }
                 }
@@ -146,7 +148,7 @@ where
             }
         }
 
-        CctalkMessage::try_from_bytes(&rx_buf[0..n])
+        CctalkMessage::try_from_bytes(rx_buf.as_slice())
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))
     }
 
@@ -188,7 +190,6 @@ where
         timeout_ms: u32,
         num_bytes: usize,
     ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
-        let mut n = 0_usize;
         let mut rx_buf: hVec<u8, 260> = hVec::new();
         const POLL_INTERVAL_MS: u32 = 5_u32;
         let mut elapsed_ms = 0_u32;
@@ -196,9 +197,8 @@ where
             match self.uart.read() {
                 Ok(byte) => {
                     let _ = rx_buf.push(byte);
-                    n = n + 1;
 
-                    if n == num_bytes {
+                    if rx_buf.len() == num_bytes {
                         break;
                     }
                 }
