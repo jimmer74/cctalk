@@ -18,6 +18,7 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 name = "cctalk"
 version = "0.1.0"
 dependencies = [
+ "crc16",
  "embedded-hal 1.0.0",
  "embedded-hal-mock",
  "embedded-hal-nb",
@@ -26,6 +27,12 @@ dependencies = [
  "nb 1.1.0",
  "thiserror",
 ]
+
+[[package]]
+name = "crc16"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "338089f42c427b86394a5ee60ff321da23a5c89c9d89514c829687b26359fcff"
 
 [[package]]
 name = "embedded-hal"

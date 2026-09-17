@@ -1,5 +1,5 @@
 use super::headers::CcTalkHeader;
-use super::message::CctalkMessage;
+use super::message::Cctalk8BitChksumMessage;
 use crate::{DEFAULT_TIMEOUT_MS, MASTER_ADDR, errors::CctalkTransmissionError};
 use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
@@ -42,8 +42,8 @@ where
         addr: u8,
         header: CcTalkHeader,
         timeout_ms: Option<u32>,
-    ) -> Result<CctalkMessage, CctalkTransmissionError> {
-        let msg = CctalkMessage::new(addr, MASTER_ADDR, header, hVec::new());
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
+        let msg = Cctalk8BitChksumMessage::new(addr, MASTER_ADDR, header, hVec::new());
         let res = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
         let header = res.header();
         if header != CcTalkHeader::Ack {
@@ -54,9 +54,9 @@ where
 
     pub fn transfer(
         &mut self,
-        msg: CctalkMessage,
+        msg: Cctalk8BitChksumMessage,
         timeout_ms: u32,
-    ) -> Result<CctalkMessage, CctalkTransmissionError> {
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
         let msg_bytes = self.write_msg(msg.clone())?;
         if self.echo {
             match self.read_msg_exact(timeout_ms, msg_bytes.len()) {
@@ -84,7 +84,7 @@ where
     }
 
     pub fn addr_scan(&mut self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
-        let tx = CctalkMessage::try_from_bytes(&ADDR_POL).unwrap();
+        let tx = Cctalk8BitChksumMessage::try_from_bytes(&ADDR_POL).unwrap();
         let _ = self.write_msg(tx.clone());
 
         if self.echo {
@@ -117,7 +117,7 @@ where
         &mut self,
         timeout_ms: u32,
         num_bytes: usize,
-    ) -> Result<CctalkMessage, CctalkTransmissionError> {
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
         // let mut n = 0_usize;
         let mut rx_buf: hVec<u8, 260> = hVec::new();
         const POLL_INTERVAL_MS: u32 = 5_u32;
@@ -148,7 +148,7 @@ where
             }
         }
 
-        CctalkMessage::try_from_bytes(rx_buf.as_slice())
+        Cctalk8BitChksumMessage::try_from_bytes(rx_buf.as_slice())
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))
     }
 
@@ -220,7 +220,10 @@ where
         Ok(rx_buf)
     }
 
-    pub fn read_msg(&mut self, timeout_ms: u32) -> Result<CctalkMessage, CctalkTransmissionError> {
+    pub fn read_msg(
+        &mut self,
+        timeout_ms: u32,
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
         let mut n = 0_usize;
         let mut rx_buf: [u8; 260] = [0u8; 260];
         const POLL_INTERVAL_MS: u32 = 1_u32;
@@ -250,7 +253,7 @@ where
             }
         }
 
-        CctalkMessage::try_from_bytes(&rx_buf[0..n])
+        Cctalk8BitChksumMessage::try_from_bytes(&rx_buf[0..n])
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))
     }
     /***************************************************************
@@ -262,7 +265,7 @@ where
      *****************************************************************/
     pub fn write_msg(
         &mut self,
-        msg: CctalkMessage,
+        msg: Cctalk8BitChksumMessage,
     ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let msg_bytes = msg
             .try_to_bytes()
@@ -305,7 +308,7 @@ mod tests {
     fn test_header_only_send() {
         const NOTE_ACC_ADDR: u8 = 0x28;
 
-        let tx_msg = CctalkMessage::new(
+        let tx_msg = Cctalk8BitChksumMessage::new(
             NOTE_ACC_ADDR,
             MASTER_ADDR,
             CcTalkHeader::SimplePoll,
@@ -336,7 +339,7 @@ mod tests {
         println!("{:?}", res);
         assert_eq!(
             res.unwrap(),
-            CctalkMessage::try_from_bytes(&rx_na_bytes).unwrap(),
+            Cctalk8BitChksumMessage::try_from_bytes(&rx_na_bytes).unwrap(),
         );
         //
         // dev.probe(&mut cctalk)
@@ -421,7 +424,7 @@ mod tests {
             .read_msg_exact(2, 9)
             .map_err(|_e| CctalkMessageError::NoChkSum);
 
-        assert_eq!(CctalkMessage::try_from_bytes(&rx_bytes), result);
+        assert_eq!(Cctalk8BitChksumMessage::try_from_bytes(&rx_bytes), result);
 
         uart.done();
     }
@@ -430,7 +433,7 @@ mod tests {
     fn test_tx_cctalk_msg() {
         use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
 
-        let tx_case = CctalkMessage::new(
+        let tx_case = Cctalk8BitChksumMessage::new(
             0x06,
             0x01,
             crate::headers::CcTalkHeader::ResetDevice,
@@ -458,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_send_cctalk_echo() {
-        let tx_case = CctalkMessage::new(
+        let tx_case = Cctalk8BitChksumMessage::new(
             0x02,
             0x01,
             crate::headers::CcTalkHeader::SimplePoll,
@@ -495,7 +498,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap(),
-            CctalkMessage::try_from_bytes(&rx_bytes).unwrap()
+            Cctalk8BitChksumMessage::try_from_bytes(&rx_bytes).unwrap()
         );
 
         uart.done();
@@ -530,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_send_cctalk_no_echo() {
-        let tx_case = CctalkMessage::new(
+        let tx_case = Cctalk8BitChksumMessage::new(
             0x02,
             0x01,
             crate::headers::CcTalkHeader::SimplePoll,
@@ -566,7 +569,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap(),
-            CctalkMessage::try_from_bytes(&rx_bytes).unwrap()
+            Cctalk8BitChksumMessage::try_from_bytes(&rx_bytes).unwrap()
         );
 
         uart.done();
@@ -577,7 +580,7 @@ mod tests {
         // !todo("fix this");
         // use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
 
-        let tx_case = CctalkMessage::new(
+        let tx_case = Cctalk8BitChksumMessage::new(
             0x02,
             0x01,
             crate::headers::CcTalkHeader::SimplePoll,
@@ -612,7 +615,7 @@ mod tests {
     fn test_rx_cctalk_incorrect_len() {
         // use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
 
-        let tx_case = CctalkMessage::new(
+        let tx_case = Cctalk8BitChksumMessage::new(
             0x02,
             0x01,
             crate::headers::CcTalkHeader::SimplePoll,

@@ -1,18 +1,96 @@
+use std::ops::{Deref, DerefMut};
+
 use super::errors::CctalkMessageError;
 use super::headers::CcTalkHeader;
 use heapless::Vec as hVec;
 
 // #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct CctalkMessage {
-    src: u8,
+pub struct Cctalk8BitChksumMessage {
     dest: u8,
+    len: u8,
+    src: u8,
     header: u8,
     data: hVec<u8, 255>,
-    len: u8,
     chksum: Option<u8>,
 }
-impl core::fmt::Display for CctalkMessage {
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct CctalkCRC16ChksumMessage {
+    dest: u8,
+    len: u8,
+    chksum_lsb: Option<u8>,
+    header: u8,
+    data: hVec<u8, 255>,
+    chksum_msb: Option<u8>,
+}
+
+impl CctalkCRC16ChksumMessage {
+    //length and chksum are calced from supplied data (source, dest, header, data).
+    //if everything else is correct, then message will be correct
+    pub fn new(dest: u8, header: CcTalkHeader, data: hVec<u8, 255>) -> CctalkCRC16ChksumMessage {
+        // let data_sum = data.iter().map(|&x| x as u16).sum::<u16>();
+        let data_len = data.len() as u8;
+        // let proto_sum: u8 =
+        //     (dest as u16 + data_len as u16 + src as u16 + header as u16 + data_sum) as u8;
+        // let chksum = Some((256 - proto_sum as u16) as u8);
+        let mut msg = CctalkCRC16ChksumMessage {
+            dest,
+            len: data_len,
+            chksum_lsb: None,
+            header: header as u8,
+            data,
+            chksum_msb: None,
+        };
+        let chksum = msg.calc_chksum().to_le_bytes();
+        msg.chksum_lsb = Some(chksum[0]);
+        msg.chksum_msb = Some(chksum[1]);
+
+        msg
+    }
+
+    fn calc_chksum(&self) -> u16 {
+        //WARN: Kermit uses x^16 + x^12+x^5 + 1 Polynomial
+        //Initial CRC Reg = 0x0000
+        // Which mataches Appendix 9 of CCtalk spec Part 3
+        // INFO: however it is non-reflected, I stubled
+        // accross XMODEM which is non-reflected and works!
+
+        let mut container: hVec<u8, 260> = hVec::new();
+        use crc16::*;
+
+        _ = container.push(self.dest);
+        _ = container.push(self.len);
+        // _ = container.push(0x00);
+        _ = container.push(self.header);
+
+        if !self.data.is_empty() {
+            println!("found data array: {:?}, adding to chksum", self.data);
+            for dat in self.data.clone() {
+                _ = container.push(dat);
+            }
+        };
+
+        // _ = container.push(0x00);
+
+        println!("data to be chksummed: {:?}", container);
+        // container.reverse();
+        let chksum = State::<XMODEM>::calculate(container.as_slice());
+        println!("Actual 16-bit CRC: {:04X?}", chksum);
+
+        chksum
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum CctalkMessage {
+    Standard8Bit(Cctalk8BitChksumMessage),
+    CRC16Bit(CctalkCRC16ChksumMessage),
+}
+
+// impl Deref for CcTalkMessage {}
+
+impl core::fmt::Display for Cctalk8BitChksumMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let msg = format!(
             "From: {}\nData Len: {}\nTo: {}\nHeader: {}\nData: {:?}\nChksum: {:?} ",
@@ -27,16 +105,21 @@ impl core::fmt::Display for CctalkMessage {
     }
 }
 #[allow(dead_code)]
-impl CctalkMessage {
+impl Cctalk8BitChksumMessage {
     //length and chksum are calced from supplied data (source, dest, header, data).
     //if everything else is correct, then message will be correct
-    pub fn new(dest: u8, src: u8, header: CcTalkHeader, data: hVec<u8, 255>) -> CctalkMessage {
+    pub fn new(
+        dest: u8,
+        src: u8,
+        header: CcTalkHeader,
+        data: hVec<u8, 255>,
+    ) -> Cctalk8BitChksumMessage {
         // let data_sum = data.iter().map(|&x| x as u16).sum::<u16>();
         let data_len = data.len() as u8;
         // let proto_sum: u8 =
         //     (dest as u16 + data_len as u16 + src as u16 + header as u16 + data_sum) as u8;
         // let chksum = Some((256 - proto_sum as u16) as u8);
-        let mut msg = CctalkMessage {
+        let mut msg = Cctalk8BitChksumMessage {
             dest,
             len: data_len,
             src,
@@ -50,7 +133,7 @@ impl CctalkMessage {
         msg
     }
     // packet [dest, len, src, header, data[..], chksum]
-    pub fn try_from_bytes(data: &[u8]) -> Result<CctalkMessage, CctalkMessageError> {
+    pub fn try_from_bytes(data: &[u8]) -> Result<Cctalk8BitChksumMessage, CctalkMessageError> {
         let packet_len = data.len();
 
         if packet_len <= 4 {
@@ -76,7 +159,7 @@ impl CctalkMessage {
         }
         //if data_len > 5
 
-        let rx = CctalkMessage {
+        let rx = Cctalk8BitChksumMessage {
             src: data[2],
             dest: data[0],
             header: data[3],
@@ -192,12 +275,22 @@ impl CctalkMessage {
 mod tests {
     // use embedded_hal_mock::eh0::i2c::Transaction;
 
+    use crate::headers::CcTalkHeader::{ResetDevice, SimplePoll};
+
     use super::*;
+
+    #[test]
+    fn test_16_bit_crc() {
+        let msg = CctalkCRC16ChksumMessage::new(0x28, ResetDevice, hVec::new());
+
+        assert_eq!(msg.chksum_lsb, Some(0x46));
+        assert_eq!(msg.chksum_msb, Some(0x3f));
+    }
 
     #[test]
     fn test_bad_cctalk() {
         //this is an incorrect message (checksum should be wrong)
-        let testcase = CctalkMessage {
+        let testcase = Cctalk8BitChksumMessage {
             dest: 0x02,
             //new fn auto-calcs len, need to supply manually here
             len: 0x02,
@@ -211,7 +304,7 @@ mod tests {
         //check new() does not match above (i.e. checksum is wrong as expected)
         assert_ne!(
             testcase,
-            CctalkMessage::new(
+            Cctalk8BitChksumMessage::new(
                 0x02,
                 0x01,
                 CcTalkHeader::DispenseHopperCoins,
@@ -222,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_wrong_chksum() {
-        let testcase = CctalkMessage {
+        let testcase = Cctalk8BitChksumMessage {
             dest: 0x02,
             len: 0x02,
             src: 0x01,
@@ -246,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_wrong_len() {
-        let testcase = CctalkMessage {
+        let testcase = Cctalk8BitChksumMessage {
             dest: 0x02,
             len: 0x00,
             src: 0x01,
@@ -268,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_to_bytes() {
-        let testcase = CctalkMessage::new(
+        let testcase = Cctalk8BitChksumMessage::new(
             0x02,
             0x01,
             CcTalkHeader::UploadCalibrationData,
@@ -295,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_from_bytes() {
-        let cct = CctalkMessage::new(
+        let cct = Cctalk8BitChksumMessage::new(
             0x02,
             0x01,
             CcTalkHeader::SimplePoll,
@@ -306,7 +399,7 @@ mod tests {
             .try_to_bytes()
             .expect("error couldn't convert test msg to bytes - fix the test!'");
 
-        match CctalkMessage::try_from_bytes(&data) {
+        match Cctalk8BitChksumMessage::try_from_bytes(&data) {
             Ok(new_cct) => {
                 assert_eq!(cct, new_cct);
             }
