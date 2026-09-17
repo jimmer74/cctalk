@@ -83,10 +83,10 @@ impl core::fmt::Display for CctalkDeviceKind {
     }
 }
 
+#[rustfmt::skip]
 impl From<&[u8]> for CctalkDeviceKind {
     fn from(value: &[u8]) -> Self {
         match value {
-            #[rustfmt::skip]
             [66,105,108,108,32,86,97,108,105,100,97,116,111,114] => Self::NoteAcceptor,
             [67, 111, 105, 110, 32, 65, 99, 99, 101, 112, 116, 111, 114] => Self::Coinmech,
             [80, 97, 121, 111, 117, 116] => Self::Hopper,
