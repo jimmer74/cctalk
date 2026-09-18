@@ -1,7 +1,7 @@
 use super::headers::CcTalkHeader;
 use super::message::Cctalk8BitChksumMessage;
 use crate::{
-    DEFAULT_TIMEOUT_MS, MASTER_ADDR, errors::CctalkTransmissionError,
+    DEFAULT_TIMEOUT_MS, MASTER_ADDR, device::CctalkEncKey, errors::CctalkTransmissionError,
     message::CctalkCRC16ChksumMessage,
 };
 use embedded_hal::delay::DelayNs;
@@ -54,7 +54,43 @@ where
         };
         Ok(res)
     }
-
+    pub fn retrieve_enc_key(
+        &mut self,
+        addr: u8,
+        timeout_ms: Option<u32>,
+    ) -> Result<CctalkEncKey, CctalkTransmissionError> {
+        let msg = Cctalk8BitChksumMessage::new(
+            addr,
+            MASTER_ADDR,
+            CcTalkHeader::RequestEncryptionKey,
+            hVec::new(),
+        );
+        match self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)) {
+            //possibly encrypted (or encryption aware and set to [00,00,00])
+            Ok(res) => {
+                println!("encryption key: {:?}", res.data());
+                let key: Result<[u8; 3], _> = res.data().as_slice().try_into();
+                match key {
+                    Ok(key) => match key {
+                        [00, 00, 00] => return Ok(CctalkEncKey::CctalkUnEncrypted),
+                        _ => return Ok(CctalkEncKey::CctalkDESKey(key)),
+                    },
+                    Err(e) => {
+                        println!("failed to convert enc key to [u8;3]: {}", e);
+                        return Err(CctalkTransmissionError::UnknownError);
+                    }
+                }
+            }
+            Err(CctalkTransmissionError::CctalkMessageError(e)) => {
+                println!("{}, device doesn't support/predates encryption", e);
+                return Ok(CctalkEncKey::CctalkUnEncrypted);
+            }
+            Err(e) => {
+                println!("Encryption key error: {}", e);
+                return Err(e);
+            }
+        }
+    }
     pub fn transfer(
         &mut self,
         msg: Cctalk8BitChksumMessage,
@@ -180,7 +216,10 @@ where
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))
     }
 
-    fn read_bytes(&mut self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
+    pub fn read_bytes(
+        &mut self,
+        timeout_ms: u32,
+    ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let mut n = 0_usize;
         let mut rx_buf: hVec<u8, 260> = hVec::new();
         const POLL_INTERVAL_MS: u32 = 1_u32;

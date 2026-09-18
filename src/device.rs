@@ -1,9 +1,12 @@
 use super::interface::Cctalk;
 use crate::{
+    MASTER_ADDR,
     errors::CctalkTransmissionError,
     headers::CcTalkHeader::{self, RequestEquipmentCategory, RequestManufacturerId, SimplePoll},
+    message::Cctalk8BitChksumMessage,
 };
 use embedded_hal::delay::DelayNs;
+use heapless::Vec as hVec;
 
 use embedded_hal_nb::serial::{Read, Write};
 #[derive(Debug, Default)]
@@ -13,6 +16,7 @@ pub struct CctalkDevice {
     manu: String,
     model: String,
     chksum: CctalkDeviceCRC,
+    encrypted: CctalkEncKey,
 }
 
 #[derive(Default, Debug)]
@@ -20,6 +24,13 @@ pub enum CctalkDeviceCRC {
     Crc16xmodem,
     #[default]
     Simple8bit,
+}
+
+#[derive(Default, Debug, PartialEq, PartialOrd)]
+pub enum CctalkEncKey {
+    #[default]
+    CctalkUnEncrypted,
+    CctalkDESKey([u8; 3]),
 }
 
 impl CctalkDevice {
@@ -42,22 +53,24 @@ impl CctalkDevice {
         DELAY: DelayNs,
         UART: Read + Write,
     {
+        //INFO: All devices should be able to report this stuff - encrypted or not
+        //Any failure will result in probe being aborted
+
         //Simple Poll
+        #[allow(unused_assignments)]
         let mut res = cctalk.header_only(self.addr, SimplePoll, None)?;
-        _ = res;
 
         //Device type
-        //TODO: Bail early if info not avail
         res = cctalk.header_only(self.addr, RequestEquipmentCategory, None)?;
-        // println!("Device type: {}", unsafe {
-        // String::from_utf8_unchecked(res.data().to_vec())
-        // });
 
         self.kind = CctalkDeviceKind::from(res.data().as_slice());
 
         if self.kind == CctalkDeviceKind::Unknown {
             return Err(CctalkTransmissionError::CctalkDeviceTypeUnknown);
         }
+
+        //Encryption Key/Status
+        self.encrypted = cctalk.retrieve_enc_key(self.addr, None)?;
 
         //Manufacturer
         res = cctalk.header_only(self.addr, RequestManufacturerId, None)?;
