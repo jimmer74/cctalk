@@ -1,6 +1,9 @@
 use super::headers::CcTalkHeader;
 use super::message::Cctalk8BitChksumMessage;
-use crate::{DEFAULT_TIMEOUT_MS, MASTER_ADDR, errors::CctalkTransmissionError};
+use crate::{
+    DEFAULT_TIMEOUT_MS, MASTER_ADDR, errors::CctalkTransmissionError,
+    message::CctalkCRC16ChksumMessage,
+};
 use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
 use heapless::Vec as hVec;
@@ -105,7 +108,32 @@ where
             Err(e) => return Err(e),
         }
     }
+    pub fn addr_scan_16(
+        &mut self,
+        timeout_ms: u32,
+    ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
+        let tx = CctalkCRC16ChksumMessage::new(0x00, CcTalkHeader::AddressPoll, hVec::new());
+        let tx = Cctalk8BitChksumMessage::from(tx);
+        let _ = self.write_msg(tx.clone());
 
+        if self.echo {
+            match self.read_msg_exact(20, tx.packet_len()) {
+                Ok(rx_msg) => {
+                    if rx_msg != tx {
+                        return Err(CctalkTransmissionError::FailedToReciveEcho);
+                    }
+                }
+                Err(_e) => {
+                    return Err(CctalkTransmissionError::CctalkSerialReadError);
+                }
+            }
+        }
+
+        match self.read_bytes(timeout_ms) {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => return Err(e),
+        }
+    }
     /***************************************************************
      *
      *

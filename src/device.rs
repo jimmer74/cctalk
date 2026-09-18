@@ -12,6 +12,14 @@ pub struct CctalkDevice {
     kind: CctalkDeviceKind,
     manu: String,
     model: String,
+    chksum: CctalkDeviceCRC,
+}
+
+#[derive(Default, Debug)]
+pub enum CctalkDeviceCRC {
+    Crc16xmodem,
+    #[default]
+    Simple8bit,
 }
 
 impl CctalkDevice {
@@ -20,6 +28,10 @@ impl CctalkDevice {
             addr,
             ..Default::default()
         }
+    }
+
+    pub fn chksum(&mut self, crc: CctalkDeviceCRC) {
+        self.chksum = crc;
     }
 
     pub fn probe<UART, DELAY>(

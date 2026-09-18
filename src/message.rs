@@ -1,5 +1,3 @@
-use std::ops::{Deref, DerefMut};
-
 use super::errors::CctalkMessageError;
 use super::headers::CcTalkHeader;
 use heapless::Vec as hVec;
@@ -12,17 +10,30 @@ pub struct Cctalk8BitChksumMessage {
     src: u8,
     header: u8,
     data: hVec<u8, 255>,
-    chksum: Option<u8>,
+    chksum: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct CctalkCRC16ChksumMessage {
     dest: u8,
     len: u8,
-    chksum_lsb: Option<u8>,
+    chksum_lsb: u8,
     header: u8,
     data: hVec<u8, 255>,
-    chksum_msb: Option<u8>,
+    chksum_msb: u8,
+}
+
+impl From<CctalkCRC16ChksumMessage> for Cctalk8BitChksumMessage {
+    fn from(value: CctalkCRC16ChksumMessage) -> Self {
+        Self {
+            dest: value.dest,
+            len: value.len,
+            src: value.chksum_lsb,
+            header: value.header,
+            data: value.data,
+            chksum: value.chksum_msb,
+        }
+    }
 }
 
 impl CctalkCRC16ChksumMessage {
@@ -37,14 +48,14 @@ impl CctalkCRC16ChksumMessage {
         let mut msg = CctalkCRC16ChksumMessage {
             dest,
             len: data_len,
-            chksum_lsb: None,
+            chksum_lsb: 0x00,
             header: header as u8,
             data,
-            chksum_msb: None,
+            chksum_msb: 0x00,
         };
         let chksum = msg.calc_chksum().to_le_bytes();
-        msg.chksum_lsb = Some(chksum[0]);
-        msg.chksum_msb = Some(chksum[1]);
+        msg.chksum_lsb = chksum[0];
+        msg.chksum_msb = chksum[1];
 
         msg
     }
@@ -65,7 +76,7 @@ impl CctalkCRC16ChksumMessage {
         _ = container.push(self.header);
 
         if !self.data.is_empty() {
-            println!("found data array: {:?}, adding to chksum", self.data);
+            // println!("found data array: {:?}, adding to chksum", self.data);
             for dat in self.data.clone() {
                 _ = container.push(dat);
             }
@@ -73,10 +84,10 @@ impl CctalkCRC16ChksumMessage {
 
         // _ = container.push(0x00);
 
-        println!("data to be chksummed: {:?}", container);
+        // println!("data to be chksummed: {:?}", container);
         // container.reverse();
         let chksum = State::<XMODEM>::calculate(container.as_slice());
-        println!("Actual 16-bit CRC: {:04X?}", chksum);
+        // println!("Actual 16-bit CRC: {:04X?}", chksum);
 
         chksum
     }
@@ -125,10 +136,10 @@ impl Cctalk8BitChksumMessage {
             src,
             header: header as u8,
             data,
-            chksum: None,
+            chksum: 0x00,
         };
 
-        msg.chksum = Some(msg.calc_chksum());
+        msg.chksum = msg.calc_chksum();
 
         msg
     }
@@ -175,7 +186,7 @@ impl Cctalk8BitChksumMessage {
                 hVec::new()
             },
             len: data[1],
-            chksum: Some(data[packet_len as usize - 1]),
+            chksum: data[packet_len as usize - 1],
         };
 
         Ok(rx)
@@ -204,7 +215,7 @@ impl Cctalk8BitChksumMessage {
                 .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
         }
         _ = tx_buf
-            .push(self.chksum.unwrap())
+            .push(self.chksum)
             .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
         // println!("{:#04X?}", tx_buf);
 
@@ -229,7 +240,7 @@ impl Cctalk8BitChksumMessage {
         self.data.len() as usize + 1 + 1 + 1 + 1 + 1
     }
 
-    pub fn chksum(self: &Self) -> Option<u8> {
+    pub fn chksum(self: &Self) -> u8 {
         self.chksum
     }
     pub fn calc_chksum(self: &Self) -> u8 {
@@ -241,24 +252,17 @@ impl Cctalk8BitChksumMessage {
     }
     pub fn chksum_valid(self: &Self) -> Result<u8, CctalkMessageError> {
         //happy path, chksum exists
-        if let Some(curr_chksum) = self.chksum {
-            let calc_chksum = self.calc_chksum();
+        let calc_chksum = self.calc_chksum();
 
-            if curr_chksum == calc_chksum {
-                Ok(curr_chksum)
-            } else {
-                Err(CctalkMessageError::IncorrectChksum(
-                    curr_chksum,
-                    calc_chksum,
-                ))
-            }
-        }
-        //sad path, chksum not set!
-        else {
-            Err(CctalkMessageError::NoChkSum)
+        if self.chksum == calc_chksum {
+            Ok(self.chksum)
+        } else {
+            Err(CctalkMessageError::IncorrectChksum(
+                self.chksum,
+                calc_chksum,
+            ))
         }
     }
-
     pub fn len_valid(self: &Self) -> Result<u8, CctalkMessageError> {
         if self.data.len() as u8 == self.len {
             Ok(self.len)
@@ -283,12 +287,12 @@ mod tests {
     fn test_16_bit_crc() {
         let msg = CctalkCRC16ChksumMessage::new(0x28, ResetDevice, hVec::new());
 
-        assert_eq!(msg.chksum_lsb, Some(0x46));
-        assert_eq!(msg.chksum_msb, Some(0x3f));
+        assert_eq!(msg.chksum_lsb, 0x46);
+        assert_eq!(msg.chksum_msb, 0x3f);
     }
 
     #[test]
-    fn test_bad_cctalk() {
+    fn test_bad_8bit_cctalk() {
         //this is an incorrect message (checksum should be wrong)
         let testcase = Cctalk8BitChksumMessage {
             dest: 0x02,
@@ -298,7 +302,7 @@ mod tests {
             //new fn converts this on fly, but have to do manually here
             header: CcTalkHeader::DispenseHopperCoins as u8,
             data: hVec::from_array([0x02, 0x02]),
-            chksum: Some(0x22),
+            chksum: 0x22,
         };
 
         //check new() does not match above (i.e. checksum is wrong as expected)
@@ -321,7 +325,7 @@ mod tests {
             src: 0x01,
             header: CcTalkHeader::SimplePoll as u8,
             data: hVec::from([0x2, 0x0]),
-            chksum: Some(0xFF),
+            chksum: 0xFF,
         };
 
         println!("{}", testcase.calc_chksum());
@@ -345,7 +349,7 @@ mod tests {
             src: 0x01,
             header: CcTalkHeader::SimplePoll as u8,
             data: hVec::from_array([0x2, 0x0]),
-            chksum: Some(0xFF),
+            chksum: 0xFF,
         };
         let res = testcase.len_valid();
         match res {
