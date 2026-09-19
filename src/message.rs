@@ -148,11 +148,11 @@ impl Cctalk8BitChksumMessage {
         let packet_len = data.len();
 
         if packet_len <= 4 {
-            println!(
-                "packet too short! Actual packet len: {}, packet: {:02X?}",
-                packet_len,
-                &data[..]
-            );
+            // println!(
+            //     "packet too short! Actual packet len: {}, packet: {:02X?}",
+            //     packet_len,
+            //     &data[..]
+            // );
             return Err(CctalkMessageError::MessageTooShort(packet_len));
         }
 

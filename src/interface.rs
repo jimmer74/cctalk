@@ -69,20 +69,15 @@ where
             //possibly encrypted (or encryption aware and set to [00,00,00])
             Ok(res) => {
                 println!("encryption key: {:?}", res.data());
-                let key: Result<[u8; 3], _> = res.data().as_slice().try_into();
-                match key {
-                    Ok(key) => match key {
-                        [00, 00, 00] => return Ok(CctalkEncKey::CctalkUnEncrypted),
-                        _ => return Ok(CctalkEncKey::CctalkDESKey(key)),
-                    },
-                    Err(e) => {
-                        println!("failed to convert enc key to [u8;3]: {}", e);
-                        return Err(CctalkTransmissionError::UnknownError);
-                    }
+                let key = res.data();
+                if key.is_empty() {
+                    return Ok(CctalkEncKey::CctalkUnEncrypted);
+                } else {
+                    return Ok(CctalkEncKey::CctalkDESKey(key.clone()));
                 }
             }
-            Err(CctalkTransmissionError::CctalkMessageError(e)) => {
-                println!("{}, device doesn't support/predates encryption", e);
+            Err(CctalkTransmissionError::CctalkMessageError(_e)) => {
+                println!("device doesn't support/predates encryption");
                 return Ok(CctalkEncKey::CctalkUnEncrypted);
             }
             Err(e) => {

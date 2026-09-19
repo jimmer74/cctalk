@@ -30,7 +30,7 @@ pub enum CctalkDeviceCRC {
 pub enum CctalkEncKey {
     #[default]
     CctalkUnEncrypted,
-    CctalkDESKey([u8; 3]),
+    CctalkDESKey(hVec<u8, 255>),
 }
 
 impl CctalkDevice {
@@ -70,7 +70,7 @@ impl CctalkDevice {
         }
 
         //Encryption Key/Status
-        self.encrypted = cctalk.retrieve_enc_key(self.addr, None)?;
+        self.encrypted = cctalk.retrieve_enc_key(self.addr, Some(200))?;
 
         //Manufacturer
         res = cctalk.header_only(self.addr, RequestManufacturerId, None)?;
