@@ -54,6 +54,22 @@ where
         };
         Ok(res)
     }
+
+    pub fn header_only_16(
+        &mut self,
+        addr: u8,
+        header: CcTalkHeader,
+        timeout_ms: Option<u32>,
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
+        let msg = CctalkCRC16ChksumMessage::new(addr, header, hVec::new());
+        let msg = Cctalk8BitChksumMessage::from(msg);
+        let res = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
+        let header = res.header();
+        if header != CcTalkHeader::Ack {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+        };
+        Ok(res)
+    }
     pub fn retrieve_enc_key(
         &mut self,
         addr: u8,
@@ -125,10 +141,14 @@ where
             match self.read_msg_exact(20, tx.packet_len()) {
                 Ok(rx_msg) => {
                     if rx_msg != tx {
+                        println!("echo: {:?} does not match {:?}", rx_msg, tx);
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
+                    } else {
+                        println!("echo matches!");
                     }
                 }
-                Err(_e) => {
+                Err(e) => {
+                    println!("error: {}", e);
                     return Err(CctalkTransmissionError::CctalkSerialReadError);
                 }
             }
@@ -151,10 +171,12 @@ where
             match self.read_msg_exact(20, tx.packet_len()) {
                 Ok(rx_msg) => {
                     if rx_msg != tx {
+                        println!("echo: {:?} does not match {:?}", rx_msg, tx);
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     }
                 }
-                Err(_e) => {
+                Err(e) => {
+                    println!("error: {}", e);
                     return Err(CctalkTransmissionError::CctalkSerialReadError);
                 }
             }
@@ -182,6 +204,7 @@ where
         const POLL_INTERVAL_MS: u32 = 5_u32;
         let mut elapsed_ms = 0_u32;
         if num_bytes <= 4 {
+            println!("num_bytes {} too low", num_bytes);
             return Err(CctalkTransmissionError::RxDataMalformedLength);
         }
         loop {

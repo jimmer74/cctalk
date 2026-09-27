@@ -1,32 +1,30 @@
 use super::interface::Cctalk;
 use crate::{
-    MASTER_ADDR,
     errors::CctalkTransmissionError,
     headers::CcTalkHeader::{self, RequestEquipmentCategory, RequestManufacturerId, SimplePoll},
-    message::Cctalk8BitChksumMessage,
 };
 use embedded_hal::delay::DelayNs;
 use heapless::Vec as hVec;
 
 use embedded_hal_nb::serial::{Read, Write};
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CctalkDevice {
-    addr: u8,
-    kind: CctalkDeviceKind,
-    manu: String,
-    model: String,
+    pub addr: u8,
+    pub kind: CctalkDeviceKind,
+    pub manu: String,
+    pub model: String,
     chksum: CctalkDeviceCRC,
     encrypted: CctalkEncKey,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub enum CctalkDeviceCRC {
     Crc16xmodem,
     #[default]
     Simple8bit,
 }
 
-#[derive(Default, Debug, PartialEq, PartialOrd)]
+#[derive(Default, Debug, Clone, PartialEq, PartialOrd)]
 pub enum CctalkEncKey {
     #[default]
     CctalkUnEncrypted,
