@@ -15,7 +15,7 @@ const ADDR_POL: [u8; 5] = [000, 000, 001, CcTalkHeader::AddressPoll as u8, 002];
 pub struct Cctalk<UART, DELAY> {
     uart: UART,
     delay: DELAY,
-    echo: bool,
+    pub echo: bool,
 }
 
 impl<UART, DELAY> Cctalk<UART, DELAY>
@@ -92,8 +92,8 @@ where
                     return Ok(CctalkEncKey::CctalkDESKey(key.clone()));
                 }
             }
-            Err(CctalkTransmissionError::CctalkMessageError(_e)) => {
-                println!("device doesn't support/predates encryption");
+            Err(CctalkTransmissionError::CctalkMessageError(e)) => {
+                println!("device doesn't support/predates encryption: {}", e);
                 return Ok(CctalkEncKey::CctalkUnEncrypted);
             }
             Err(e) => {

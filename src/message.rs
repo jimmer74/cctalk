@@ -2,6 +2,12 @@ use super::errors::CctalkMessageError;
 use super::headers::CcTalkHeader;
 use heapless::Vec as hVec;
 
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum CctalkChksumMessage {
+    Bit8(Cctalk8BitChksumMessage),
+    Bit16(CctalkCRC16ChksumMessage),
+}
+
 // #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Cctalk8BitChksumMessage {
@@ -58,6 +64,10 @@ impl CctalkCRC16ChksumMessage {
         msg.chksum_msb = chksum[1];
 
         msg
+    }
+
+    pub fn data_str(&self) -> String {
+        String::from_utf8(self.data.to_vec()).unwrap()
     }
 
     fn calc_chksum(&self) -> u16 {
@@ -191,7 +201,9 @@ impl Cctalk8BitChksumMessage {
 
         Ok(rx)
     }
-
+    pub fn data_str(&self) -> String {
+        String::from_utf8(self.data.to_vec()).unwrap()
+    }
     pub fn try_to_bytes(&self) -> Result<hVec<u8, 260>, CctalkMessageError> {
         // let tx_buf_len = 5 + self.len;
         let mut tx_buf = hVec::new();

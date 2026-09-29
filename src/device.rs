@@ -1,20 +1,35 @@
+use core::marker::PhantomData;
+use std::ops::Deref;
+
 use super::interface::Cctalk;
 use crate::{
+    DEFAULT_TIMEOUT_MS, MASTER_ADDR,
     errors::CctalkTransmissionError,
     headers::CcTalkHeader::{self, RequestEquipmentCategory, RequestManufacturerId, SimplePoll},
+    message::{Cctalk8BitChksumMessage, CctalkCRC16ChksumMessage},
 };
 use embedded_hal::delay::DelayNs;
 use heapless::Vec as hVec;
 
 use embedded_hal_nb::serial::{Read, Write};
-#[derive(Debug, Default, Clone)]
-pub struct CctalkDevice {
+
+const BILL_EVENT_BUFF_LEN: usize = 11;
+
+#[derive(Debug, Clone, Default)]
+pub struct CctalkDevice<EncType, InitType> {
     pub addr: u8,
     pub kind: CctalkDeviceKind,
     pub manu: String,
     pub model: String,
+    #[allow(unused)]
     chksum: CctalkDeviceCRC,
+    #[allow(unused)]
     encrypted: CctalkEncKey,
+    #[allow(unused)]
+    event_counter: EventCounter,
+    last_event: EventCounter,
+    _enc_state: PhantomData<EncType>,
+    _init_state: PhantomData<InitType>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -24,62 +39,450 @@ pub enum CctalkDeviceCRC {
     Simple8bit,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, PartialOrd)]
-pub enum CctalkEncKey {
-    #[default]
-    CctalkUnEncrypted,
-    CctalkDESKey(hVec<u8, 255>),
+#[derive(Debug)]
+pub struct NoChksum;
+
+impl Default for NoChksum {
+    fn default() -> Self {
+        Self {}
+    }
+}
+#[derive(Default, Debug)]
+pub struct Unenc8Bit;
+#[derive(Default, Debug)]
+pub struct Unenc16Bit;
+#[derive(Default, Debug)]
+pub struct Bnv16Bit;
+#[derive(Default, Debug)]
+pub struct Des16Bit;
+
+pub trait InitStatus {}
+#[derive(Default)]
+pub struct Unprobed;
+#[derive(Default, Debug)]
+pub struct UnInit;
+#[derive(Default, Debug)]
+pub struct Init;
+
+impl InitStatus for Init {}
+impl InitStatus for UnInit {}
+impl InitStatus for Unprobed {}
+
+#[derive(Default, Debug, Clone)]
+struct EventCounter(u8);
+
+#[allow(unused)]
+impl EventCounter {
+    fn increase(&mut self) {
+        if self.0 == 255 {
+            self.0 = 1;
+        } else {
+            self.0 += 1;
+        }
+    }
+    fn set(&mut self, value: u8) {
+        self.0 = value;
+    }
+    fn get(&self) -> u8 {
+        self.0
+    }
 }
 
-impl CctalkDevice {
-    pub fn new(addr: u8) -> CctalkDevice {
+impl Deref for EventCounter {
+    type Target = u8;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl CctalkDevice<NoChksum, Unprobed> {
+    pub fn new(addr: u8) -> CctalkDevice<NoChksum, Unprobed>
+    where
+        NoChksum: Default,
+    {
         Self {
             addr,
+            _enc_state: PhantomData,
+            _init_state: PhantomData,
             ..Default::default()
         }
     }
 
-    pub fn chksum(&mut self, crc: CctalkDeviceCRC) {
-        self.chksum = crc;
-    }
-
     pub fn probe<UART, DELAY>(
-        &mut self,
+        &self,
         cctalk: &mut Cctalk<UART, DELAY>,
-    ) -> Result<(), CctalkTransmissionError>
+    ) -> Result<CctalkDevice<Unenc8Bit, UnInit>, CctalkTransmissionError>
     where
         DELAY: DelayNs,
         UART: Read + Write,
     {
-        //INFO: All devices should be able to report this stuff - encrypted or not
-        //Any failure will result in probe being aborted
-
-        //Simple Poll
+        let addr = self.addr;
         #[allow(unused_assignments)]
         let mut res = cctalk.header_only(self.addr, SimplePoll, None)?;
 
         //Device type
         res = cctalk.header_only(self.addr, RequestEquipmentCategory, None)?;
 
-        self.kind = CctalkDeviceKind::from(res.data().as_slice());
+        let kind = CctalkDeviceKind::from(res.data().as_slice());
 
-        if self.kind == CctalkDeviceKind::Unknown {
+        if kind == CctalkDeviceKind::Unknown {
             return Err(CctalkTransmissionError::CctalkDeviceTypeUnknown);
         }
 
         //Encryption Key/Status
-        self.encrypted = cctalk.retrieve_enc_key(self.addr, Some(200))?;
+        let encrypted = CctalkEncKey::CctalkUnEncrypted; //cctalk.retrieve_enc_key(self.addr, Some(200))?;
 
         //Manufacturer
         res = cctalk.header_only(self.addr, RequestManufacturerId, None)?;
-        self.manu = String::from_utf8(res.data().to_vec()).unwrap();
+        let manu = String::from_utf8(res.data().to_vec()).unwrap();
 
         //Model
         res = cctalk.header_only(self.addr, CcTalkHeader::RequestProductCode, None)?;
-        self.model = String::from_utf8(res.data().to_vec()).unwrap();
+        let model = String::from_utf8(res.data().to_vec()).unwrap();
 
-        Ok(())
+        Ok(CctalkDevice {
+            addr: addr,
+            kind: kind,
+            manu: manu,
+            model: model,
+            event_counter: EventCounter::default(),
+            last_event: EventCounter::default(),
+            chksum: CctalkDeviceCRC::Simple8bit,
+            encrypted: encrypted,
+            _enc_state: PhantomData,
+            _init_state: PhantomData,
+        })
     }
+
+    pub fn probe16<UART, DELAY>(
+        &mut self,
+        cctalk: &mut Cctalk<UART, DELAY>,
+    ) -> Result<CctalkDevice<Unenc16Bit, UnInit>, CctalkTransmissionError>
+    where
+        DELAY: DelayNs,
+        UART: Read + Write,
+    {
+        let addr = self.addr;
+        #[allow(unused_assignments)]
+        let mut res = cctalk.header_only_16(addr, SimplePoll, None)?;
+
+        //Device type
+        res = cctalk.header_only_16(addr, RequestEquipmentCategory, None)?;
+
+        let kind = CctalkDeviceKind::from(res.data().as_slice());
+
+        if kind == CctalkDeviceKind::Unknown {
+            return Err(CctalkTransmissionError::CctalkDeviceTypeUnknown);
+        }
+
+        //Encryption Key/Status
+        let encrypted = cctalk.retrieve_enc_key(addr, Some(200))?;
+
+        //Manufacturer
+        res = cctalk.header_only_16(addr, RequestManufacturerId, None)?;
+        let manu = String::from_utf8(res.data().to_vec()).unwrap();
+
+        //Model
+        res = cctalk.header_only_16(addr, CcTalkHeader::RequestProductCode, None)?;
+        let model = String::from_utf8(res.data().to_vec()).unwrap();
+
+        Ok(CctalkDevice {
+            addr: addr,
+            kind: kind,
+            manu: manu,
+            model: model,
+            chksum: CctalkDeviceCRC::Simple8bit,
+            encrypted: encrypted,
+            _enc_state: PhantomData,
+            _init_state: PhantomData,
+            event_counter: EventCounter::default(),
+            last_event: EventCounter::default(),
+        })
+    }
+}
+
+impl CctalkDevice<Unenc8Bit, Init> {
+    pub fn read_buff_events<UART, DELAY>(
+        &mut self,
+        cctalk: &mut Cctalk<UART, DELAY>,
+        timeout_ms: Option<u32>,
+    ) -> Result<[u8; BILL_EVENT_BUFF_LEN], CctalkTransmissionError>
+    where
+        DELAY: DelayNs,
+        UART: Read + Write,
+    {
+        let res = self.header_only(
+            cctalk,
+            self.addr,
+            CcTalkHeader::ReadBufferedBillEvents,
+            timeout_ms,
+        )?;
+        let header = res.header();
+        if header != CcTalkHeader::Ack {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+        };
+
+        let dat = res.data()[0..BILL_EVENT_BUFF_LEN]
+            .try_into()
+            .expect("error buff events ret value not 11 bytes long");
+
+        Ok(dat)
+    }
+}
+
+impl<I> CctalkDevice<Unenc8Bit, I>
+where
+    I: InitStatus,
+{
+    pub fn header_only<UART, DELAY>(
+        &mut self,
+        cctalk: &mut Cctalk<UART, DELAY>,
+        addr: u8,
+        header: CcTalkHeader,
+        timeout_ms: Option<u32>,
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError>
+    where
+        DELAY: DelayNs,
+        UART: Read + Write,
+    {
+        let msg = Cctalk8BitChksumMessage::new(addr, MASTER_ADDR, header, hVec::new());
+        let res = cctalk.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
+        let header = res.header();
+        if header != CcTalkHeader::Ack {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+        };
+        Ok(res)
+    }
+
+    pub fn transfer<UART, DELAY>(
+        &mut self,
+        cctalk: &mut Cctalk<UART, DELAY>,
+        msg: Cctalk8BitChksumMessage,
+        timeout_ms: u32,
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError>
+    where
+        DELAY: DelayNs,
+        UART: Read + Write,
+    {
+        let msg_bytes = cctalk.write_msg(msg.clone())?;
+        if cctalk.echo {
+            match cctalk.read_msg_exact(timeout_ms, msg_bytes.len()) {
+                Ok(rx_msg) => {
+                    // println!("echo matches - discarding!");
+                    if rx_msg != msg {
+                        println!("echo does not match");
+                        return Err(CctalkTransmissionError::FailedToReciveEcho);
+                    }
+                }
+                Err(e) => {
+                    println!("read error: {}", e);
+                    return Err(CctalkTransmissionError::FailedToReciveEcho);
+                }
+            }
+        }
+
+        let msg = cctalk.read_msg(timeout_ms)?;
+
+        let _chksum = msg
+            .chksum_valid()
+            .map_err(|_e| CctalkTransmissionError::RxDataMalformedChksum)?;
+
+        Ok(msg)
+    }
+
+    pub fn init<UART, DELAY>(
+        mut self,
+        cctalk: &mut Cctalk<UART, DELAY>,
+    ) -> Result<CctalkDevice<Unenc8Bit, Init>, CctalkTransmissionError>
+    where
+        DELAY: DelayNs,
+        UART: Read + Write,
+    {
+        /*
+         *
+         *      Get all note slots
+         *
+         * */
+
+        let mut country_code: [u8; 2] = [0x00, 0x00];
+        for i in 1..=16 {
+            let mut payload: hVec<u8, 255> = hVec::new();
+            _ = payload.push(i);
+            let msg = Cctalk8BitChksumMessage::new(
+                self.addr,
+                MASTER_ADDR,
+                CcTalkHeader::RequestBillId,
+                payload,
+            );
+            let msg = self.transfer(cctalk, msg, 80).ok();
+            let dat = msg.clone().unwrap().data().clone();
+            if *dat != [0, 0, 0, 0, 0, 0, 0] {
+                println!(
+                    "Note Slot {}: {:?}/{:?}",
+                    i,
+                    msg.clone().unwrap().data(),
+                    msg.clone().unwrap().data_str()
+                );
+
+                for (j, _) in country_code.clone().iter().enumerate() {
+                    if j < 2 {
+                        country_code[j] = dat[j];
+                    }
+                }
+            } else {
+                println!("Note slot {} is unoccupied", i);
+            }
+        }
+        println!(
+            "Country code: {:?} / {}",
+            country_code,
+            String::from_utf8_lossy(&country_code[..])
+        );
+
+        /*
+         *
+         *      Request Country Scaling Factor
+         *
+         * */
+
+        let payload: hVec<u8, 255> = hVec::from_array(country_code);
+        let msg = Cctalk8BitChksumMessage::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::RequestCountryScalingFactor,
+            payload,
+        );
+
+        let msg = self.transfer(cctalk, msg, 80).ok();
+        let dat = msg.clone().unwrap().data().clone();
+
+        println!("RCSF: {:?}", dat);
+
+        /*
+         *
+         *      Request Currency Revision
+         *
+         * */
+        let payload: hVec<u8, 255> = hVec::new(); //hVec::from_array(country_code);
+        let msg = Cctalk8BitChksumMessage::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::RequestCurrencyRevision,
+            payload,
+        );
+
+        match self.transfer(cctalk, msg, 80) {
+            Ok(msg) => {
+                println!("Currency Rev: {:?}", String::from_utf8_lossy(msg.data()));
+            }
+            Err(e) => {
+                println!("error curr revision: {}", e)
+            }
+        }
+
+        /*
+         *
+         *      Modify Bill Operating Mode
+         *
+         * */
+
+        let payload: hVec<u8, 255> = if self.model == String::from("NV10") {
+            hVec::from_array([0x00])
+        } else if self.model == String::from("NV9") {
+            hVec::from_array([0x01])
+        } else {
+            hVec::from_array([0x01])
+        };
+        let msg = Cctalk8BitChksumMessage::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::ModifyBillOperatingMode,
+            payload,
+        );
+        let msg = self.transfer(cctalk, msg, 80).ok();
+        println!("mod bill op mode: {}", msg.unwrap().header());
+
+        /*
+         *
+         *      Modify Inhibit Status
+         *
+         * */
+        let payload: hVec<u8, 255> = hVec::from_array([0xFF, 0xFF]);
+        let msg = Cctalk8BitChksumMessage::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::ModifyInhibitStatus,
+            payload,
+        );
+
+        let msg = self.transfer(cctalk, msg, 80).ok();
+        println!("mod master inhibit: {}", msg.unwrap().header());
+
+        /*
+         *
+         *      Modify Master Inhibit Status
+         *
+         * */
+
+        let payload: hVec<u8, 255> = hVec::from_array([0x01]); //hVec::from_array(country_code);
+        let msg = Cctalk8BitChksumMessage::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::ModifyMasterInhibitStatus,
+            payload,
+        );
+
+        let msg = self.transfer(cctalk, msg, 80).ok();
+        println!("mod master inhibit: {}", msg.unwrap().header());
+
+        Ok(CctalkDevice {
+            addr: self.addr,
+            kind: self.kind,
+            manu: self.manu,
+            model: self.model,
+            chksum: self.chksum,
+            encrypted: self.encrypted,
+            event_counter: self.event_counter,
+            last_event: self.last_event,
+            _enc_state: PhantomData,
+            _init_state: PhantomData,
+        })
+    }
+}
+
+#[allow(unused)]
+impl<I> CctalkDevice<Unenc16Bit, I>
+where
+    I: InitStatus,
+{
+    fn header_only<UART, DELAY /*, ENCRYPTION*/>(
+        &mut self,
+        cctalk: &mut Cctalk<UART, DELAY>,
+        addr: u8,
+        header: CcTalkHeader,
+        timeout_ms: Option<u32>,
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError>
+    where
+        DELAY: DelayNs,
+        UART: Read + Write,
+    {
+        let msg = CctalkCRC16ChksumMessage::new(addr, header, hVec::new());
+        let msg = Cctalk8BitChksumMessage::from(msg);
+        let res = cctalk.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
+        let header = res.header();
+        if header != CcTalkHeader::Ack {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+        };
+        Ok(res)
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, PartialOrd)]
+pub enum CctalkEncKey {
+    #[default]
+    CctalkUnEncrypted,
+    CctalkDESKey(hVec<u8, 255>),
 }
 
 #[derive(Default, Debug, Clone, PartialEq, PartialOrd)]
