@@ -54,16 +54,16 @@ fn main() -> Result<(), Box<dyn Error>> {
        
 
         println!("probing addr: {}", addrs[0]);
-        let device = CctalkDevice::new(addrs[0]);
-        let device = device.probe(&mut cctalk)?;
+        let device = CctalkDevice::new(addrs[0], &mut cctalk);
+        let device = device.probe()?;
         println!("device: {:#?}", device);
         
-        let mut device = device.init(&mut cctalk)?;
+        let mut device = device.init()?;
 
         let mut old_res: [u8; 11] = [0u8; 11];
 
         loop {
-            let res = device.read_buff_events(&mut cctalk, Some(20))?;
+            let res = device.read_buff_events(Some(20))?;
             if old_res != res {
                 
                 println!("res: {:?}", res);

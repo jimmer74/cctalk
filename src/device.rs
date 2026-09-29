@@ -1,5 +1,8 @@
 use core::marker::PhantomData;
-use std::ops::Deref;
+use std::{
+    ops::Deref,
+    sync::{Arc, Mutex},
+};
 
 use super::interface::Cctalk;
 use crate::{
@@ -15,12 +18,13 @@ use embedded_hal_nb::serial::{Read, Write};
 
 const BILL_EVENT_BUFF_LEN: usize = 11;
 
-#[derive(Debug, Clone, Default)]
-pub struct CctalkDevice<EncType, InitType> {
+#[derive(Debug)]
+pub struct CctalkDevice<'a, EncType, InitType, U, D> {
     pub addr: u8,
     pub kind: CctalkDeviceKind,
     pub manu: String,
     pub model: String,
+    cctalk: Arc<Mutex<&'a mut Cctalk<U, D>>>,
     #[allow(unused)]
     chksum: CctalkDeviceCRC,
     #[allow(unused)]
@@ -96,31 +100,42 @@ impl Deref for EventCounter {
     }
 }
 
-impl CctalkDevice<NoChksum, Unprobed> {
-    pub fn new(addr: u8) -> CctalkDevice<NoChksum, Unprobed>
+impl<'a, U, D> CctalkDevice<'a, NoChksum, Unprobed, U, D> {
+    pub fn new(addr: u8, cctalk: &'a mut Cctalk<U, D>) -> CctalkDevice<'a, NoChksum, Unprobed, U, D>
     where
-        NoChksum: Default,
+        U: Read + Write,
+        D: DelayNs,
     {
         Self {
             addr,
+            cctalk: Arc::new(Mutex::new(cctalk)),
             _enc_state: PhantomData,
             _init_state: PhantomData,
-            ..Default::default()
+            kind: Default::default(),
+            manu: Default::default(),
+            model: Default::default(),
+            chksum: Default::default(),
+            encrypted: Default::default(),
+            event_counter: Default::default(),
+            last_event: Default::default(),
         }
     }
 
-    pub fn probe<UART, DELAY>(
-        &self,
-        cctalk: &mut Cctalk<UART, DELAY>,
-    ) -> Result<CctalkDevice<Unenc8Bit, UnInit>, CctalkTransmissionError>
+    pub fn probe(
+        self,
+        // cctalk: &mut Cctalk<UART, DELAY>,
+    ) -> Result<CctalkDevice<'a, Unenc8Bit, UnInit, U, D>, CctalkTransmissionError>
     where
-        DELAY: DelayNs,
-        UART: Read + Write,
+        D: DelayNs,
+        U: Read + Write,
     {
-        let addr = self.addr;
-        #[allow(unused_assignments)]
-        let mut res = cctalk.header_only(self.addr, SimplePoll, None)?;
+        let hw_clone = Arc::clone(&self.cctalk);
 
+        let mut cctalk = hw_clone.lock().unwrap();
+        // cctalk.get_mut().unwrap();
+        let addr = self.addr;
+        let mut res = cctalk.header_only(self.addr, SimplePoll, None)?;
+        _ = res;
         //Device type
         res = cctalk.header_only(self.addr, RequestEquipmentCategory, None)?;
 
@@ -141,11 +156,14 @@ impl CctalkDevice<NoChksum, Unprobed> {
         res = cctalk.header_only(self.addr, CcTalkHeader::RequestProductCode, None)?;
         let model = String::from_utf8(res.data().to_vec()).unwrap();
 
+        drop(cctalk);
+
         Ok(CctalkDevice {
             addr: addr,
             kind: kind,
             manu: manu,
             model: model,
+            cctalk: self.cctalk,
             event_counter: EventCounter::default(),
             last_event: EventCounter::default(),
             chksum: CctalkDeviceCRC::Simple8bit,
@@ -155,14 +173,17 @@ impl CctalkDevice<NoChksum, Unprobed> {
         })
     }
 
-    pub fn probe16<UART, DELAY>(
-        &mut self,
-        cctalk: &mut Cctalk<UART, DELAY>,
-    ) -> Result<CctalkDevice<Unenc16Bit, UnInit>, CctalkTransmissionError>
+    pub fn probe16(
+        self,
+        // cctalk: &mut Cctalk<UART, DELAY>,
+    ) -> Result<CctalkDevice<'a, Unenc16Bit, UnInit, U, D>, CctalkTransmissionError>
     where
-        DELAY: DelayNs,
-        UART: Read + Write,
+        D: DelayNs,
+        U: Read + Write,
     {
+        let hw_clone = Arc::clone(&self.cctalk);
+
+        let mut cctalk = hw_clone.lock().unwrap();
         let addr = self.addr;
         #[allow(unused_assignments)]
         let mut res = cctalk.header_only_16(addr, SimplePoll, None)?;
@@ -192,6 +213,7 @@ impl CctalkDevice<NoChksum, Unprobed> {
             kind: kind,
             manu: manu,
             model: model,
+            cctalk: self.cctalk,
             chksum: CctalkDeviceCRC::Simple8bit,
             encrypted: encrypted,
             _enc_state: PhantomData,
@@ -202,18 +224,20 @@ impl CctalkDevice<NoChksum, Unprobed> {
     }
 }
 
-impl CctalkDevice<Unenc8Bit, Init> {
-    pub fn read_buff_events<UART, DELAY>(
+impl<'a, U, D> CctalkDevice<'a, Unenc8Bit, Init, U, D> {
+    pub fn read_buff_events(
         &mut self,
-        cctalk: &mut Cctalk<UART, DELAY>,
         timeout_ms: Option<u32>,
     ) -> Result<[u8; BILL_EVENT_BUFF_LEN], CctalkTransmissionError>
     where
-        DELAY: DelayNs,
-        UART: Read + Write,
+        D: DelayNs,
+        U: Read + Write,
     {
+        // let hw_clone = Arc::clone(&self.cctalk);
+        // let cctalk = hw_clone.lock().unwrap();
+
         let res = self.header_only(
-            cctalk,
+            // cctalk,
             self.addr,
             CcTalkHeader::ReadBufferedBillEvents,
             timeout_ms,
@@ -231,21 +255,22 @@ impl CctalkDevice<Unenc8Bit, Init> {
     }
 }
 
-impl<I> CctalkDevice<Unenc8Bit, I>
+impl<'a, I, U, D> CctalkDevice<'a, Unenc8Bit, I, U, D>
 where
     I: InitStatus,
+    U: Read + Write,
+    D: DelayNs,
 {
-    pub fn header_only<UART, DELAY>(
+    pub fn header_only(
         &mut self,
-        cctalk: &mut Cctalk<UART, DELAY>,
+        // cctalk: &mut Cctalk<UART, DELAY>,
         addr: u8,
         header: CcTalkHeader,
         timeout_ms: Option<u32>,
-    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError>
-    where
-        DELAY: DelayNs,
-        UART: Read + Write,
-    {
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
+        let hw_clone = Arc::clone(&self.cctalk);
+        let mut cctalk = hw_clone.lock().unwrap();
+
         let msg = Cctalk8BitChksumMessage::new(addr, MASTER_ADDR, header, hVec::new());
         let res = cctalk.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
         let header = res.header();
@@ -255,16 +280,14 @@ where
         Ok(res)
     }
 
-    pub fn transfer<UART, DELAY>(
+    pub fn transfer(
         &mut self,
-        cctalk: &mut Cctalk<UART, DELAY>,
         msg: Cctalk8BitChksumMessage,
         timeout_ms: u32,
-    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError>
-    where
-        DELAY: DelayNs,
-        UART: Read + Write,
-    {
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
+        let hw_clone = Arc::clone(&self.cctalk);
+        let mut cctalk = hw_clone.lock().unwrap();
+
         let msg_bytes = cctalk.write_msg(msg.clone())?;
         if cctalk.echo {
             match cctalk.read_msg_exact(timeout_ms, msg_bytes.len()) {
@@ -291,13 +314,13 @@ where
         Ok(msg)
     }
 
-    pub fn init<UART, DELAY>(
+    pub fn init(
         mut self,
-        cctalk: &mut Cctalk<UART, DELAY>,
-    ) -> Result<CctalkDevice<Unenc8Bit, Init>, CctalkTransmissionError>
+        // cctalk: &mut Cctalk<UART, DELAY>,
+    ) -> Result<CctalkDevice<'a, Unenc8Bit, Init, U, D>, CctalkTransmissionError>
     where
-        DELAY: DelayNs,
-        UART: Read + Write,
+        D: DelayNs,
+        U: Read + Write,
     {
         /*
          *
@@ -315,7 +338,7 @@ where
                 CcTalkHeader::RequestBillId,
                 payload,
             );
-            let msg = self.transfer(cctalk, msg, 80).ok();
+            let msg = self.transfer(msg, 80).ok();
             let dat = msg.clone().unwrap().data().clone();
             if *dat != [0, 0, 0, 0, 0, 0, 0] {
                 println!(
@@ -354,7 +377,7 @@ where
             payload,
         );
 
-        let msg = self.transfer(cctalk, msg, 80).ok();
+        let msg = self.transfer(msg, 80).ok();
         let dat = msg.clone().unwrap().data().clone();
 
         println!("RCSF: {:?}", dat);
@@ -372,7 +395,7 @@ where
             payload,
         );
 
-        match self.transfer(cctalk, msg, 80) {
+        match self.transfer(msg, 80) {
             Ok(msg) => {
                 println!("Currency Rev: {:?}", String::from_utf8_lossy(msg.data()));
             }
@@ -400,7 +423,7 @@ where
             CcTalkHeader::ModifyBillOperatingMode,
             payload,
         );
-        let msg = self.transfer(cctalk, msg, 80).ok();
+        let msg = self.transfer(msg, 80).ok();
         println!("mod bill op mode: {}", msg.unwrap().header());
 
         /*
@@ -416,7 +439,7 @@ where
             payload,
         );
 
-        let msg = self.transfer(cctalk, msg, 80).ok();
+        let msg = self.transfer(msg, 80).ok();
         println!("mod master inhibit: {}", msg.unwrap().header());
 
         /*
@@ -433,14 +456,17 @@ where
             payload,
         );
 
-        let msg = self.transfer(cctalk, msg, 80).ok();
+        let msg = self.transfer(msg, 80).ok();
         println!("mod master inhibit: {}", msg.unwrap().header());
+
+        // drop(cctalk);
 
         Ok(CctalkDevice {
             addr: self.addr,
             kind: self.kind,
             manu: self.manu,
             model: self.model,
+            cctalk: self.cctalk,
             chksum: self.chksum,
             encrypted: self.encrypted,
             event_counter: self.event_counter,
@@ -452,9 +478,11 @@ where
 }
 
 #[allow(unused)]
-impl<I> CctalkDevice<Unenc16Bit, I>
+impl<'a, I, U, D> CctalkDevice<'a, Unenc16Bit, I, U, D>
 where
     I: InitStatus,
+    U: Read + Write,
+    D: DelayNs,
 {
     fn header_only<UART, DELAY /*, ENCRYPTION*/>(
         &mut self,

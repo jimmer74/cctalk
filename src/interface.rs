@@ -11,7 +11,7 @@ use nb::block;
 
 const ADDR_POL: [u8; 5] = [000, 000, 001, CcTalkHeader::AddressPoll as u8, 002];
 
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Default, PartialEq, PartialOrd)]
 pub struct Cctalk<UART, DELAY> {
     uart: UART,
     delay: DELAY,
