@@ -19,7 +19,7 @@ It's all a bit proto and rough and will change massively to include:
 
 An example (using rpi-pal on a raspberry pi zero):
 
-'''
+```
 use cctalk::{device::CctalkDevice, interface::Cctalk};
 use rpi_pal::uart::Uart;
 use std::thread::sleep;
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn Error>> {
          
     }
 }
-'''
+```
 
 
 ## CCTalk Packet description
