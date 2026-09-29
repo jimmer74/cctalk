@@ -1,20 +1,82 @@
 # CCtalk library
 
-Made by hand in rust.
+Made by hand in rust. 
 
-## Goals
+## Current State
+You can use this to init a note acceptor, that's using 8-bit checksums and is unencrypted currently. 
 
-Initially had an idea to make a coin mech project run off a pi for fun. 
+Then you can read the note event buffer in a 200ms loop (or else note acceptor goes back to sleep) for changes (i.e. inserted note, inserted barcode, strimming attempt, etc).
 
-Then realised that I could hive off the cctalk part into it's own library and continue to work on it there.
+It's all a bit proto and rough and will change massively to include:
 
-I was using rpi-pal crate to develop directly on the pi, but that became painful.
+* 16-bit unencrypted devices
+* BNV encrypted devices
+* DES encryted devices
+* Coinmechs & hoppers
+* much better abstractions
+* more useful functions
+* better user experience!
 
-Since rpi-pal supports the embedded-hal stuff, I used the traits from that to divorce it from rpi-pal.
+An example (using rpi-pal on a raspberry pi zero):
 
-That way the library can be worked on, compiled and tested successfully on my laptop (and it can also be ported to be used on a microcontroller down the line.)
+'''
+use cctalk::{device::CctalkDevice, interface::Cctalk};
+use rpi_pal::uart::Uart;
+use std::thread::sleep;
 
-Eventually I will need to make it possible to use nostd, but will attempt to just get it working for tx/rx first then attempt that afterwards!
+const ADDR_SCAN_PAUSE: Duration = Duration::from_millis(1250);
+const ADDR_SCAN_TIMEOUT: u32 = 200_u32;
+
+
+fn main() -> Result<(), Box<dyn Error>> {
+    
+    let mut uart = Uart::new(9600, rpi_pal::uart::Parity::None, 8, 1).unwrap();
+    let _ = uart.set_software_flow_control(false);
+    let _ = uart.set_hardware_flow_control(false);
+    let _ = uart.set_write_mode(true);
+    let delay = rpi_pal::hal::Delay;
+    let mut cctalk = Cctalk::new(uart, delay, true);
+
+    println!("scanning addresses 8bit addresses....");
+    let addrs = cctalk.addr_scan(ADDR_SCAN_TIMEOUT)?;
+    
+    //this only cares about the 1st device it detects
+    //so will only work if you have a single note acceptor attached
+    //currently!
+
+    if addrs.len() > 0 {
+       
+        println!("received addresses: {:?}", addrs);
+        //bus needs loooong delay after address scan
+        //before devices will respond again
+        //to give all devices chance to answer
+        sleep(ADDR_SCAN_PAUSE);
+       
+
+        println!("probing addr: {}", addrs[0]);
+        let device = CctalkDevice::new(addrs[0]);
+        let device = device.probe(&mut cctalk)?;
+        println!("device: {:#?}", device);
+        
+        let mut device = device.init(&mut cctalk)?;
+
+        let mut old_res: [u8; 11] = [0u8; 11];
+
+        loop {
+            let res = device.read_buff_events(&mut cctalk, Some(20))?;
+            if old_res != res {
+                
+                println!("res: {:?}", res);
+
+                old_res = res;
+            }
+            sleep(Duration::from_millis(200));
+        }
+         
+    }
+}
+'''
+
 
 ## CCTalk Packet description
 Standard Packet (in bytes) is:
@@ -74,34 +136,5 @@ so our chksum is 0xFF and our packet to transmit is:
          │ └─┼─┤ │
   Data ──┘   │ │ └── Mode
 /RESET ──────┘ └──── 12v-24v)
-
-
-Non open-collector TX on raspberry pi needs following to enable 2-wire
-to 1-wire cctalk device. D should be a fast switching schottky (low forward voltage drop)
-
-           PWR
-            ▲                            3v3
-            │                             ▲
-            │                             │
-            │                            ┌┴┐
-┌───────────┴────────────┐               │ │
-│                        │               │ │ 10K
-│                        │               └┬┘
-│                     TX ┼───────── D ────┤
-│                        │       ◄─────   │
-│           uC           │                │
-│                        │                │
-│                        │                │
-│                     RX ┼────────────────┴─────── CCtalk Device
-│                        │
-│                        │
-└────────────┬───────────┘
-             │
-             │
-             │
-             ▼
-            GND
-
-
 
 ```
