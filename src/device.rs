@@ -1,30 +1,27 @@
 use core::marker::PhantomData;
-use std::{
-    ops::Deref,
-    sync::{Arc, Mutex},
-};
+use std::ops::Deref;
 
-use super::interface::Cctalk;
 use crate::{
     DEFAULT_TIMEOUT_MS, MASTER_ADDR,
     errors::CctalkTransmissionError,
     headers::CcTalkHeader::{self, RequestEquipmentCategory, RequestManufacturerId, SimplePoll},
+    interface::SharedCctalk,
     message::{Cctalk8BitChksumMessage, CctalkCRC16ChksumMessage},
 };
-use embedded_hal::delay::DelayNs;
 use heapless::Vec as hVec;
 
+use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
 
 const BILL_EVENT_BUFF_LEN: usize = 11;
 
 #[derive(Debug)]
-pub struct CctalkDevice<'a, EncType, InitType, U, D> {
+pub struct CctalkDevice<EncType, InitType, U, D> {
     pub addr: u8,
     pub kind: CctalkDeviceKind,
     pub manu: String,
     pub model: String,
-    cctalk: Arc<Mutex<&'a mut Cctalk<U, D>>>,
+    cctalk: SharedCctalk<U, D>,
     #[allow(unused)]
     chksum: CctalkDeviceCRC,
     #[allow(unused)]
@@ -51,6 +48,10 @@ impl Default for NoChksum {
         Self {}
     }
 }
+// pub trait Transfer {
+//     fn transfer()
+// }
+pub trait EncStatus {}
 #[derive(Default, Debug)]
 pub struct Unenc8Bit;
 #[derive(Default, Debug)]
@@ -59,6 +60,11 @@ pub struct Unenc16Bit;
 pub struct Bnv16Bit;
 #[derive(Default, Debug)]
 pub struct Des16Bit;
+impl EncStatus for NoChksum {}
+impl EncStatus for Unenc8Bit {}
+impl EncStatus for Unenc16Bit {}
+impl EncStatus for Bnv16Bit {}
+impl EncStatus for Des16Bit {}
 
 pub trait InitStatus {}
 #[derive(Default)]
@@ -100,15 +106,20 @@ impl Deref for EventCounter {
     }
 }
 
-impl<'a, U, D> CctalkDevice<'a, NoChksum, Unprobed, U, D> {
-    pub fn new(addr: u8, cctalk: &'a mut Cctalk<U, D>) -> CctalkDevice<'a, NoChksum, Unprobed, U, D>
+//INFO: transfer fn's orginally had a write flush in
+//them, which produced weird inconsistent results when
+//reading the echo
+//WARN: do not ever put a write flush back!!!!
+
+impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
+    pub fn new(addr: u8, cctalk: SharedCctalk<U, D>) -> CctalkDevice<NoChksum, Unprobed, U, D>
     where
         U: Read + Write,
         D: DelayNs,
     {
         Self {
             addr,
-            cctalk: Arc::new(Mutex::new(cctalk)),
+            cctalk: cctalk,
             _enc_state: PhantomData,
             _init_state: PhantomData,
             kind: Default::default(),
@@ -121,23 +132,18 @@ impl<'a, U, D> CctalkDevice<'a, NoChksum, Unprobed, U, D> {
         }
     }
 
-    pub fn probe(
-        self,
-        // cctalk: &mut Cctalk<UART, DELAY>,
-    ) -> Result<CctalkDevice<'a, Unenc8Bit, UnInit, U, D>, CctalkTransmissionError>
+    pub fn probe(mut self) -> Result<CctalkDevice<Unenc8Bit, UnInit, U, D>, CctalkTransmissionError>
     where
         D: DelayNs,
         U: Read + Write,
     {
-        let hw_clone = Arc::clone(&self.cctalk);
-
-        let mut cctalk = hw_clone.lock().unwrap();
-        // cctalk.get_mut().unwrap();
+        // let mut cctalk = self.cctalk.lock().unwrap();
         let addr = self.addr;
-        let mut res = cctalk.header_only(self.addr, SimplePoll, None)?;
+        let mut res = self.header_only(self.addr, SimplePoll, None)?;
         _ = res;
         //Device type
-        res = cctalk.header_only(self.addr, RequestEquipmentCategory, None)?;
+
+        res = self.header_only(self.addr, RequestEquipmentCategory, None)?;
 
         let kind = CctalkDeviceKind::from(res.data().as_slice());
 
@@ -149,14 +155,14 @@ impl<'a, U, D> CctalkDevice<'a, NoChksum, Unprobed, U, D> {
         let encrypted = CctalkEncKey::CctalkUnEncrypted; //cctalk.retrieve_enc_key(self.addr, Some(200))?;
 
         //Manufacturer
-        res = cctalk.header_only(self.addr, RequestManufacturerId, None)?;
+        res = self.header_only(self.addr, RequestManufacturerId, None)?;
         let manu = String::from_utf8(res.data().to_vec()).unwrap();
 
         //Model
-        res = cctalk.header_only(self.addr, CcTalkHeader::RequestProductCode, None)?;
+        res = self.header_only(self.addr, CcTalkHeader::RequestProductCode, None)?;
         let model = String::from_utf8(res.data().to_vec()).unwrap();
 
-        drop(cctalk);
+        // drop(cctalk);
 
         Ok(CctalkDevice {
             addr: addr,
@@ -173,23 +179,77 @@ impl<'a, U, D> CctalkDevice<'a, NoChksum, Unprobed, U, D> {
         })
     }
 
-    pub fn probe16(
-        self,
+    pub fn header_only(
+        &mut self,
         // cctalk: &mut Cctalk<UART, DELAY>,
-    ) -> Result<CctalkDevice<'a, Unenc16Bit, UnInit, U, D>, CctalkTransmissionError>
+        addr: u8,
+        header: CcTalkHeader,
+        timeout_ms: Option<u32>,
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError>
     where
         D: DelayNs,
         U: Read + Write,
     {
-        let hw_clone = Arc::clone(&self.cctalk);
+        let msg = Cctalk8BitChksumMessage::new(addr, MASTER_ADDR, header, hVec::new());
+        let res = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
+        let header = res.header();
+        if header != CcTalkHeader::Ack {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+        };
+        Ok(res)
+    }
 
-        let mut cctalk = hw_clone.lock().unwrap();
+    pub fn transfer(
+        &mut self,
+        msg: Cctalk8BitChksumMessage,
+        timeout_ms: u32,
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError>
+    where
+        D: DelayNs,
+        U: Read + Write,
+    {
+        // let hw_clone = Arc::clone(&self.cctalk);
+        let mut cctalk = self.cctalk.lock().unwrap();
+
+        let msg_bytes = cctalk.write_msg(msg.clone())?;
+        if cctalk.echo {
+            match cctalk.read_msg_exact(timeout_ms, msg_bytes.len()) {
+                Ok(rx_msg) => {
+                    // println!("echo matches - discarding!");
+                    if rx_msg != msg {
+                        println!("echo does not match");
+                        return Err(CctalkTransmissionError::FailedToReciveEcho);
+                    }
+                }
+                Err(e) => {
+                    println!("read error: {}", e);
+                    return Err(CctalkTransmissionError::FailedToReciveEcho);
+                }
+            }
+        }
+
+        let msg = cctalk.read_msg(timeout_ms)?;
+
+        let _chksum = msg
+            .chksum_valid()
+            .map_err(|_e| CctalkTransmissionError::RxDataMalformedChksum)?;
+
+        Ok(msg)
+    }
+
+    pub fn probe16(
+        mut self,
+    ) -> Result<CctalkDevice<Unenc16Bit, UnInit, U, D>, CctalkTransmissionError>
+    where
+        D: DelayNs,
+        U: Read + Write,
+    {
         let addr = self.addr;
         #[allow(unused_assignments)]
-        let mut res = cctalk.header_only_16(addr, SimplePoll, None)?;
+        let mut res = self.header_only(addr, SimplePoll, None)?;
 
         //Device type
-        res = cctalk.header_only_16(addr, RequestEquipmentCategory, None)?;
+        res = self.header_only(addr, RequestEquipmentCategory, None)?;
 
         let kind = CctalkDeviceKind::from(res.data().as_slice());
 
@@ -198,14 +258,14 @@ impl<'a, U, D> CctalkDevice<'a, NoChksum, Unprobed, U, D> {
         }
 
         //Encryption Key/Status
-        let encrypted = cctalk.retrieve_enc_key(addr, Some(200))?;
+        let encrypted = self.retrieve_enc_key(addr, Some(200))?;
 
         //Manufacturer
-        res = cctalk.header_only_16(addr, RequestManufacturerId, None)?;
+        res = self.header_only(addr, RequestManufacturerId, None)?;
         let manu = String::from_utf8(res.data().to_vec()).unwrap();
 
         //Model
-        res = cctalk.header_only_16(addr, CcTalkHeader::RequestProductCode, None)?;
+        res = self.header_only(addr, CcTalkHeader::RequestProductCode, None)?;
         let model = String::from_utf8(res.data().to_vec()).unwrap();
 
         Ok(CctalkDevice {
@@ -222,9 +282,46 @@ impl<'a, U, D> CctalkDevice<'a, NoChksum, Unprobed, U, D> {
             last_event: EventCounter::default(),
         })
     }
+
+    fn retrieve_enc_key(
+        &mut self,
+        addr: u8,
+        timeout_ms: Option<u32>,
+    ) -> Result<CctalkEncKey, CctalkTransmissionError>
+    where
+        D: DelayNs,
+        U: Read + Write,
+    {
+        let msg = Cctalk8BitChksumMessage::new(
+            addr,
+            MASTER_ADDR,
+            CcTalkHeader::RequestEncryptionKey,
+            hVec::new(),
+        );
+        match self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)) {
+            //possibly encrypted (or encryption aware and set to [00,00,00])
+            Ok(res) => {
+                println!("encryption key: {:?}", res.data());
+                let key = res.data();
+                if key.is_empty() {
+                    return Ok(CctalkEncKey::CctalkUnEncrypted);
+                } else {
+                    return Ok(CctalkEncKey::CctalkDESKey(key.clone()));
+                }
+            }
+            Err(CctalkTransmissionError::CctalkMessageError(e)) => {
+                println!("device doesn't support/predates encryption: {}", e);
+                return Ok(CctalkEncKey::CctalkUnEncrypted);
+            }
+            Err(e) => {
+                println!("Encryption key error: {}", e);
+                return Err(e);
+            }
+        }
+    }
 }
 
-impl<'a, U, D> CctalkDevice<'a, Unenc8Bit, Init, U, D> {
+impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
     pub fn read_buff_events(
         &mut self,
         timeout_ms: Option<u32>,
@@ -255,9 +352,10 @@ impl<'a, U, D> CctalkDevice<'a, Unenc8Bit, Init, U, D> {
     }
 }
 
-impl<'a, I, U, D> CctalkDevice<'a, Unenc8Bit, I, U, D>
+impl<I, U, D> CctalkDevice<Unenc8Bit, I, U, D>
 where
     I: InitStatus,
+    // E: EncStatus,
     U: Read + Write,
     D: DelayNs,
 {
@@ -267,12 +365,12 @@ where
         addr: u8,
         header: CcTalkHeader,
         timeout_ms: Option<u32>,
-    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
-        let hw_clone = Arc::clone(&self.cctalk);
-        let mut cctalk = hw_clone.lock().unwrap();
-
+    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError>
+    where
+        I: InitStatus,
+    {
         let msg = Cctalk8BitChksumMessage::new(addr, MASTER_ADDR, header, hVec::new());
-        let res = cctalk.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
+        let res = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
         let header = res.header();
         if header != CcTalkHeader::Ack {
             return Err(CctalkTransmissionError::CctalkFailedToAck(header));
@@ -285,8 +383,7 @@ where
         msg: Cctalk8BitChksumMessage,
         timeout_ms: u32,
     ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
-        let hw_clone = Arc::clone(&self.cctalk);
-        let mut cctalk = hw_clone.lock().unwrap();
+        let mut cctalk = self.cctalk.lock().unwrap();
 
         let msg_bytes = cctalk.write_msg(msg.clone())?;
         if cctalk.echo {
@@ -317,7 +414,7 @@ where
     pub fn init(
         mut self,
         // cctalk: &mut Cctalk<UART, DELAY>,
-    ) -> Result<CctalkDevice<'a, Unenc8Bit, Init, U, D>, CctalkTransmissionError>
+    ) -> Result<CctalkDevice<Unenc8Bit, Init, U, D>, CctalkTransmissionError>
     where
         D: DelayNs,
         U: Read + Write,
@@ -477,32 +574,69 @@ where
     }
 }
 
-#[allow(unused)]
-impl<'a, I, U, D> CctalkDevice<'a, Unenc16Bit, I, U, D>
+impl<I, U, D> CctalkDevice<Unenc16Bit, I, U, D>
 where
     I: InitStatus,
     U: Read + Write,
     D: DelayNs,
 {
-    fn header_only<UART, DELAY /*, ENCRYPTION*/>(
+    #[allow(unused)]
+    fn header_only(
         &mut self,
-        cctalk: &mut Cctalk<UART, DELAY>,
         addr: u8,
         header: CcTalkHeader,
         timeout_ms: Option<u32>,
-    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError>
+    ) -> Result<CctalkCRC16ChksumMessage, CctalkTransmissionError>
     where
-        DELAY: DelayNs,
-        UART: Read + Write,
+        D: DelayNs,
+        U: Read + Write,
     {
         let msg = CctalkCRC16ChksumMessage::new(addr, header, hVec::new());
-        let msg = Cctalk8BitChksumMessage::from(msg);
-        let res = cctalk.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
-        let header = res.header();
-        if header != CcTalkHeader::Ack {
-            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
-        };
+        let res = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
+        //TODO: implement help fn's for 16bit msg
+        // let header = res.header();
+        // if header != CcTalkHeader::Ack {
+        //     return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+        // };
         Ok(res)
+    }
+
+    pub fn transfer(
+        &mut self,
+        msg: CctalkCRC16ChksumMessage,
+        _timeout_ms: u32,
+    ) -> Result<CctalkCRC16ChksumMessage, CctalkTransmissionError> {
+        // let hw_clone = Arc::clone(&self.cctalk);
+        // let mut cctalk = hw_clone.lock().unwrap();
+
+        //WARN: this is temp to silence mut/unused warnngs! Remove when below TODO is done
+        // _ = cctalk.addr_scan_16(timeout_ms);
+
+        //TODO: Convert to/from CRC16 msg? Use write bytes instead?
+        // let msg_bytes = cctalk.write_msg(msg.clone())?;
+        // if cctalk.echo {
+        //     match cctalk.read_msg_exact(timeout_ms, msg_bytes.len()) {
+        //         Ok(rx_msg) => {
+        //             // println!("echo matches - discarding!");
+        //             if rx_msg != msg {
+        //                 println!("echo does not match");
+        //                 return Err(CctalkTransmissionError::FailedToReciveEcho);
+        //             }
+        //         }
+        //         Err(e) => {
+        //             println!("read error: {}", e);
+        //             return Err(CctalkTransmissionError::FailedToReciveEcho);
+        //         }
+        //     }
+        // }
+        //
+        // let msg = cctalk.read_msg(timeout_ms)?;
+        //
+        // let _chksum = msg
+        //     .chksum_valid()
+        //     .map_err(|_e| CctalkTransmissionError::RxDataMalformedChksum)?;
+
+        Ok(msg)
     }
 }
 
