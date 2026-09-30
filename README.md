@@ -20,7 +20,7 @@ It's all a bit proto and rough and will change massively to include:
 An example (using rpi-pal on a raspberry pi zero):
 
 ```
-use cctalk::{device::CctalkDevice, interface::Cctalk};
+use cctalk::{device::CctalkDevice, interface::SharedCctalk};
 use rpi_pal::uart::Uart;
 use std::thread::sleep;
 
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let _ = uart.set_hardware_flow_control(false);
     let _ = uart.set_write_mode(true);
     let delay = rpi_pal::hal::Delay;
-    let mut cctalk = Cctalk::new(uart, delay, true);
+    let mut cctalk = SharedCctalk::new(uart, delay, true);
 
     println!("scanning addresses 8bit addresses....");
     let addrs = cctalk.addr_scan(ADDR_SCAN_TIMEOUT)?;
