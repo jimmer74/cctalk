@@ -1,11 +1,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::headers::CcTalkHeader;
-use super::message::Cctalk8BitChksumMessage;
-use crate::{
-    DEFAULT_TIMEOUT_MS, MASTER_ADDR, errors::CctalkTransmissionError,
-    message::CctalkCRC16ChksumMessage,
-};
+use crate::{errors::CctalkTransmissionError, message::Msg16};
 use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
 use heapless::Vec as hVec;
@@ -27,53 +23,6 @@ where
 {
     pub fn new(uart: U, delay: D, echo: bool) -> Self {
         Self { uart, delay, echo }
-    }
-
-    /***************************************************************
-     *
-     *
-     *                       Read functions
-     *
-     *
-     *****************************************************************/
-    pub fn read_msg_exact(
-        &mut self,
-        timeout_ms: u32,
-        num_bytes: usize,
-    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
-        // let mut n = 0_usize;
-        let mut rx_buf: hVec<u8, 260> = hVec::new();
-        const POLL_INTERVAL_MS: u32 = 5_u32;
-        let mut elapsed_ms = 0_u32;
-        if num_bytes <= 4 {
-            println!("num_bytes {} too low", num_bytes);
-            return Err(CctalkTransmissionError::RxDataMalformedLength);
-        }
-        loop {
-            match self.uart.read() {
-                Ok(byte) => {
-                    _ = rx_buf.push(byte);
-                    if rx_buf.len() == num_bytes {
-                        break;
-                    }
-                }
-                Err(nb::Error::WouldBlock) => {
-                    self.delay.delay_ms(POLL_INTERVAL_MS);
-                    elapsed_ms += POLL_INTERVAL_MS;
-
-                    if elapsed_ms >= timeout_ms {
-                        break;
-                    }
-                    continue;
-                }
-                Err(nb::Error::Other(_e)) => {
-                    return Err(CctalkTransmissionError::CctalkSerialReadError);
-                }
-            }
-        }
-
-        Cctalk8BitChksumMessage::try_from_bytes(rx_buf.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))
     }
 
     pub fn read_bytes(
@@ -147,63 +96,13 @@ where
         Ok(rx_buf)
     }
 
-    pub fn read_msg(
-        &mut self,
-        timeout_ms: u32,
-    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
-        let mut n = 0_usize;
-        let mut rx_buf: [u8; 260] = [0u8; 260];
-        const POLL_INTERVAL_MS: u32 = 1_u32;
-        let mut elapsed_ms = 0_u32;
-        loop {
-            match self.uart.read() {
-                Ok(byte) => {
-                    rx_buf[n] = byte;
-                    n = n + 1;
-
-                    if n == 260 {
-                        break;
-                    }
-                }
-                Err(nb::Error::WouldBlock) => {
-                    self.delay.delay_ms(POLL_INTERVAL_MS);
-                    elapsed_ms += POLL_INTERVAL_MS;
-
-                    if elapsed_ms >= timeout_ms {
-                        break;
-                    }
-                    continue;
-                }
-                Err(nb::Error::Other(_e)) => {
-                    return Err(CctalkTransmissionError::CctalkSerialReadError);
-                }
-            }
-        }
-
-        Cctalk8BitChksumMessage::try_from_bytes(&rx_buf[0..n])
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))
-    }
-    /***************************************************************
-     *
-     *
-     *                      Write functions
-     *
-     *
-     *****************************************************************/
-    pub fn write_msg(
-        &mut self,
-        msg: Cctalk8BitChksumMessage,
-    ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
-        let msg_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        for dat in msg_bytes.as_slice() {
+    pub fn write_bytes(&mut self, bytes: hVec<u8, 260>) -> Result<(), CctalkTransmissionError> {
+        let data_slice = bytes.as_slice();
+        for dat in data_slice {
             let _ = block!(self.uart.write(*dat))
                 .map_err(|_e| CctalkTransmissionError::CctalkSerialWriteError);
         }
-
-        Ok(msg_bytes)
+        Ok(())
     }
 }
 
@@ -238,15 +137,13 @@ where
     pub fn addr_scan(&self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let mut cctalk = self.0.lock().unwrap();
 
-        let tx = Cctalk8BitChksumMessage::try_from_bytes(&ADDR_POL).unwrap();
-        let _ = cctalk.write_msg(tx.clone());
-        // guard.write_msg(msg)
+        let _ = cctalk.write_bytes(hVec::from_array(ADDR_POL))?;
 
         if cctalk.echo {
-            match cctalk.read_msg_exact(20, tx.packet_len()) {
-                Ok(rx_msg) => {
-                    if rx_msg != tx {
-                        println!("echo: {:?} does not match {:?}", rx_msg, tx);
+            match cctalk.read_bytes_exact(20, ADDR_POL.len()) {
+                Ok(rx_bytes) => {
+                    if rx_bytes != ADDR_POL {
+                        println!("echo: {:?} does not match {:?}", rx_bytes, ADDR_POL);
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     } else {
                         println!("echo matches!");
@@ -271,14 +168,17 @@ where
     ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let mut cctalk = self.lock().unwrap();
 
-        let tx = CctalkCRC16ChksumMessage::new(0x00, CcTalkHeader::AddressPoll, hVec::new());
-        let tx = Cctalk8BitChksumMessage::from(tx);
-        let _ = cctalk.write_msg(tx.clone());
+        let tx = Msg16::new(0x00, CcTalkHeader::AddressPoll, hVec::new());
+        let tx_bytes = tx
+            .try_to_bytes()
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        let _ = cctalk.write_bytes(tx_bytes.clone())?;
 
         if cctalk.echo {
-            match cctalk.read_msg_exact(20, tx.packet_len()) {
+            match cctalk.read_bytes_exact(20, tx_bytes.len()) {
                 Ok(rx_msg) => {
-                    if rx_msg != tx {
+                    if rx_msg != tx.try_to_bytes().unwrap() {
                         println!("echo: {:?} does not match {:?}", rx_msg, tx);
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     }
@@ -294,53 +194,6 @@ where
             Ok(bytes) => return Ok(bytes),
             Err(e) => return Err(e),
         }
-    }
-
-    pub fn transfer(
-        &mut self,
-        msg: Cctalk8BitChksumMessage,
-        timeout_ms: u32,
-    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
-        let mut cctalk = self.lock().unwrap();
-        let msg_bytes = cctalk.write_msg(msg.clone())?;
-        if cctalk.echo {
-            match cctalk.read_msg_exact(timeout_ms, msg_bytes.len()) {
-                Ok(rx_msg) => {
-                    // println!("echo matches - discarding!");
-                    if rx_msg != msg {
-                        println!("echo does not match");
-                        return Err(CctalkTransmissionError::FailedToReciveEcho);
-                    }
-                }
-                Err(e) => {
-                    println!("read error: {}", e);
-                    return Err(CctalkTransmissionError::FailedToReciveEcho);
-                }
-            }
-        }
-
-        let msg = cctalk.read_msg(timeout_ms)?;
-
-        let _chksum = msg
-            .chksum_valid()
-            .map_err(|_e| CctalkTransmissionError::RxDataMalformedChksum)?;
-
-        Ok(msg)
-    }
-
-    pub fn header_only(
-        &mut self,
-        addr: u8,
-        header: CcTalkHeader,
-        timeout_ms: Option<u32>,
-    ) -> Result<Cctalk8BitChksumMessage, CctalkTransmissionError> {
-        let msg = Cctalk8BitChksumMessage::new(addr, MASTER_ADDR, header, hVec::new());
-        let res = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
-        let header = res.header();
-        if header != CcTalkHeader::Ack {
-            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
-        };
-        Ok(res)
     }
 }
 
@@ -490,7 +343,7 @@ mod tests {
             .read_msg_exact(2, 9)
             .map_err(|_e| CctalkMessageError::NoChkSum);
 
-        assert_eq!(Cctalk8BitChksumMessage::try_from_bytes(&rx_bytes), result);
+        assert_eq!(Msg8::try_from_bytes(&rx_bytes), result);
 
         uart.done();
     }
@@ -499,7 +352,7 @@ mod tests {
     fn test_tx_cctalk_msg() {
         use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};
 
-        let tx_case = Cctalk8BitChksumMessage::new(
+        let tx_case = Msg8::new(
             0x06,
             0x01,
             crate::headers::CcTalkHeader::ResetDevice,
