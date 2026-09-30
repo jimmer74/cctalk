@@ -3,9 +3,206 @@ use super::headers::CcTalkHeader;
 use heapless::Vec as hVec;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub enum CctalkChksumMessage {
-    Bit8(Cctalk8BitChksumMessage),
-    Bit16(CctalkCRC16ChksumMessage),
+pub struct CctalkMessage<T> {
+    value: T,
+}
+
+impl CctalkMessage<Cctalk8BitChksumMessage> {
+    pub fn new(dest: u8, src: u8, header: CcTalkHeader, data: hVec<u8, 255>) -> Self {
+        let data_len = data.len() as u8;
+
+        let mut msg = Cctalk8BitChksumMessage {
+            dest,
+            len: data_len,
+            src,
+            header: header as u8,
+            data,
+            chksum: 0x00,
+        };
+
+        msg.chksum = msg.calc_chksum();
+        Self { value: msg }
+    }
+
+    pub fn try_from_bytes(
+        data: &[u8],
+    ) -> Result<CctalkMessage<Cctalk8BitChksumMessage>, CctalkMessageError> {
+        let packet_len = data.len();
+
+        if packet_len <= 4 {
+            return Err(CctalkMessageError::MessageTooShort(packet_len));
+        }
+
+        if data[1] as usize + 5 != packet_len {
+            println!(
+                "actual packet len: {}, calculated packet len: {}, \npacket: {:02X?}",
+                packet_len,
+                data[1] + 5,
+                &data[..]
+            );
+            return Err(CctalkMessageError::IncorrectDataLen(
+                data[1] + 5,
+                packet_len as u8,
+            ));
+        }
+
+        let rx = Cctalk8BitChksumMessage {
+            src: data[2],
+            dest: data[0],
+            header: data[3],
+            data: if packet_len > 5 {
+                let mut tmp: hVec<u8, 255> = hVec::new();
+                for n in 4..packet_len - 1 {
+                    _ = tmp
+                        .push(data[n as usize])
+                        .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+                }
+                tmp
+            } else {
+                hVec::new()
+            },
+            len: data[1],
+            chksum: data[packet_len as usize - 1],
+        };
+
+        Ok(Self { value: rx })
+    }
+
+    pub fn try_to_bytes(&self) -> Result<hVec<u8, 260>, CctalkMessageError> {
+        let mut tx_buf = hVec::new();
+
+        _ = tx_buf
+            .push(self.value.dest)
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+        _ = tx_buf
+            .push(self.value.len)
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+        _ = tx_buf
+            .push(self.value.src)
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+        _ = tx_buf
+            .push(self.value.header)
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+        for dat in self.value.data.iter() {
+            _ = tx_buf
+                .push(*dat)
+                .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+        }
+        _ = tx_buf
+            .push(self.value.chksum)
+            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+
+        Ok(tx_buf)
+    }
+
+    pub fn chksum(self: &Self) -> u8 {
+        self.value.chksum
+    }
+
+    pub fn calc_chksum(self: &Self) -> u8 {
+        let data_sum = self.value.data.iter().map(|&x| x as u16).sum::<u16>();
+        let proto_sum: u8 = (self.value.dest as u16
+            + self.value.len as u16
+            + self.value.src as u16
+            + self.value.header as u16
+            + data_sum) as u8;
+        (256 - proto_sum as u16) as u8
+    }
+
+    pub fn chksum_valid(self: &Self) -> Result<u8, CctalkMessageError> {
+        //happy path, chksum exists
+        let calc_chksum = self.calc_chksum();
+
+        if self.value.chksum == calc_chksum {
+            Ok(self.value.chksum)
+        } else {
+            Err(CctalkMessageError::IncorrectChksum(
+                self.value.chksum,
+                calc_chksum,
+            ))
+        }
+    }
+}
+
+impl<M> CctalkMessage<M>
+where
+    M: MessageType,
+{
+    pub fn inner(&self) -> &M {
+        &self.value
+    }
+
+    pub fn data_str(&self) -> String
+    where
+        M: MessageType,
+    {
+        String::from_utf8(self.value.data().to_vec()).unwrap()
+    }
+
+    pub fn len_valid(self: &Self) -> Result<u8, CctalkMessageError> {
+        if self.value.data().len() as u8 == self.value.len() {
+            Ok(self.value.len())
+        } else {
+            Err(CctalkMessageError::IncorrectDataLen(
+                self.value.len(),
+                self.value.data().len() as u8,
+            ))
+        }
+    }
+}
+
+pub trait MessageType {
+    fn data(self: &Self) -> &hVec<u8, 255>;
+
+    fn dest(self: &Self) -> u8;
+
+    fn header(self: &Self) -> CcTalkHeader;
+
+    fn len(self: &Self) -> u8;
+
+    fn packet_len(self: &Self) -> usize;
+}
+
+impl MessageType for Cctalk8BitChksumMessage {
+    fn data(&self) -> &hVec<u8, 255> {
+        &self.data
+    }
+    fn dest(self: &Self) -> u8 {
+        self.dest
+    }
+
+    fn header(self: &Self) -> CcTalkHeader {
+        self.header.into()
+    }
+
+    fn len(self: &Self) -> u8 {
+        self.data.len() as u8
+    }
+
+    fn packet_len(self: &Self) -> usize {
+        self.data.len() as usize + 1 + 1 + 1 + 1 + 1
+    }
+}
+impl MessageType for CctalkCRC16ChksumMessage {
+    fn data(&self) -> &hVec<u8, 255> {
+        &self.data
+    }
+
+    fn dest(self: &Self) -> u8 {
+        self.dest
+    }
+
+    fn header(self: &Self) -> CcTalkHeader {
+        self.header.into()
+    }
+
+    fn len(self: &Self) -> u8 {
+        self.data.len() as u8
+    }
+
+    fn packet_len(self: &Self) -> usize {
+        self.data.len() as usize + 1 + 1 + 1 + 1 + 1
+    }
 }
 
 // #[allow(dead_code)]
@@ -101,12 +298,6 @@ impl CctalkCRC16ChksumMessage {
 
         chksum
     }
-}
-
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub enum CctalkMessage {
-    Standard8Bit(Cctalk8BitChksumMessage),
-    CRC16Bit(CctalkCRC16ChksumMessage),
 }
 
 // impl Deref for CcTalkMessage {}
@@ -291,7 +482,7 @@ impl Cctalk8BitChksumMessage {
 mod tests {
     // use embedded_hal_mock::eh0::i2c::Transaction;
 
-    use crate::headers::CcTalkHeader::{ResetDevice, SimplePoll};
+    use crate::headers::CcTalkHeader::ResetDevice;
 
     use super::*;
 
