@@ -77,6 +77,91 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
+Terminal Output:
+```
+scanning addresses 8bit addresses....
+echo matches!
+received addresses: [40]
+probing addr: 40
+device: CctalkDevice {
+    addr: 40,
+    kind: NoteAcceptor,
+    manu: "ITL",
+    model: "NV10",
+    cctalk: SharedCctalk(
+        Mutex {
+            data: Cctalk {
+                uart: Uart {
+                    inner: UartInner {
+                        device: File {
+                            fd: 4,
+                            path: "/dev/ttyS0",
+                            read: true,
+                            write: true,
+                        },
+                        fd: 4,
+                        rtscts_mode: Some(
+                            (
+                                Alt5,
+                                Alt5,
+                            ),
+                        ),
+                        rtscts_pins: None,
+                        blocking_read: false,
+                        blocking_write: true,
+                        baud_rate: 9600,
+                        parity: None,
+                        parity_check: None,
+                        data_bits: 8,
+                        stop_bits: 1,
+                        software_flow_control: false,
+                        hardware_flow_control: false,
+                    },
+                },
+                delay: Delay,
+                echo: true,
+            },
+            poisoned: false,
+            ..
+        },
+    ),
+    chksum: Simple8bit,
+    encrypted: CctalkUnEncrypted,
+    event_counter: EventCounter(
+        0,
+    ),
+    last_event: EventCounter(
+        0,
+    ),
+    _enc_state: PhantomData<cctalk::device::Unenc8Bit>,
+    _init_state: PhantomData<cctalk::device::UnInit>,
+}
+Note Slot 1: [71, 66, 48, 48, 48, 53, 65]/"GB0005A"
+Note Slot 2: [71, 66, 48, 48, 49, 48, 65]/"GB0010A"
+Note Slot 3: [71, 66, 48, 48, 50, 48, 65]/"GB0020A"
+Note Slot 4: [71, 66, 48, 48, 53, 48, 65]/"GB0050A"
+Note slot 5 is unoccupied
+Note slot 6 is unoccupied
+Note slot 7 is unoccupied
+Note slot 8 is unoccupied
+Note slot 9 is unoccupied
+Note slot 10 is unoccupied
+Note slot 11 is unoccupied
+Note slot 12 is unoccupied
+Note slot 13 is unoccupied
+Note slot 14 is unoccupied
+Note slot 15 is unoccupied
+Note slot 16 is unoccupied
+Country code: [71, 66] / GB
+RCSF: [100, 0, 2]
+Currency Rev: "GBP07H54"
+mod bill op mode: Ack
+mod master inhibit: Ack
+mod master inhibit: Ack
+res: [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+res: [2, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+^C
+```
 
 ## CCTalk Packet description
 Standard Packet (in bytes) is:
