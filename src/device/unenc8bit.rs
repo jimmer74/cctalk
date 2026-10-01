@@ -1,8 +1,13 @@
+use crate::errors::EventError;
+
 use super::{
     BILL_EVENT_BUFF_LEN, CcTalkHeader, CctalkDevice, CctalkTransmissionError, DEFAULT_TIMEOUT_MS,
     DelayNs, Init, InitStatus, MASTER_ADDR, Msg8, PhantomData, Read, UnInit, Unenc8Bit, Write,
     hVec,
 };
+use core::fmt::Display;
+use thiserror::Error;
+
 /*
  *
  *      Only for initialised 8bit devices
@@ -28,6 +33,61 @@ impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
             .expect("error buff events ret value not 11 bytes long");
 
         Ok(dat)
+    }
+
+    fn process_events(&mut self, data: [u8; BILL_EVENT_BUFF_LEN]) -> hVec<EventResult, 5> {
+        let mut events = hVec::new();
+
+        self.last_event.set(self.event_counter.get());
+
+        self.event_counter.set(data[0]);
+
+        let mut num_events = self.event_counter.diff(&self.last_event);
+
+        if num_events == 0 {
+            return hVec::new();
+        }
+
+        if num_events > 5 {
+            let missed_events = num_events - 5;
+            println!("missed {} events", missed_events);
+            num_events = 5;
+        }
+
+        for i in 0..num_events as usize {
+            let a = data[i + 1];
+            let b = data[i + 2];
+            match EventResult::new(a, b) {
+                Ok(ev) => {
+                    _ = events.push(ev);
+                }
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                }
+            }
+            self.last_event.increase();
+        }
+
+        events
+    }
+}
+
+struct EventResult {
+    a: u8,
+    b: u8,
+}
+
+impl EventResult {
+    fn new(a: u8, b: u8) -> Result<Self, EventError> {
+        if a == 0 {
+            return Err(EventError::from(b));
+        } else {
+            Ok(Self { a, b })
+        }
+    }
+
+    fn is_escrow(&self) -> bool {
+        self.b == 1
     }
 }
 
