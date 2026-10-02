@@ -25,7 +25,7 @@ pub enum CcTalkHeader {
     StoreEncryptionKey = 136,
     SwitchBaudRate = 129,
     ReadBarCodeData = 124,
-    RequestEncryptionKey = 111,
+    RequestEncryptionSupport = 111,
     SwitchEncryptionKey = 110,
 
     // --- 146 to 169: Bill Validation & Recycler Specifics ---
@@ -235,7 +235,7 @@ impl core::fmt::Display for CcTalkHeader {
             CcTalkHeader::AddressPoll => "Address Poll",
             CcTalkHeader::SimplePoll => "Simple Poll",
             CcTalkHeader::FactoryReserved => "Factory Reserved",
-            CcTalkHeader::RequestEncryptionKey => "Request Encryption Key",
+            CcTalkHeader::RequestEncryptionSupport => "Request Encryption Support",
             _ => "Error: Unknown Header",
         };
 
@@ -259,7 +259,8 @@ impl From<u8> for CcTalkHeader {
             103 => CcTalkHeader::ExpansionHeader4,
             106 => CcTalkHeader::RequestEscrowStatus,
             107 => CcTalkHeader::OperateEscrow,
-            110 => CcTalkHeader::RequestEncryptionKey,
+            110 => CcTalkHeader::SwitchEncryptionKey,
+            111 => CcTalkHeader::RequestEncryptionSupport,
 
             // --- 110 to 145: Advanced Bill / Cryptographic / Database --
             124 => CcTalkHeader::ReadBarCodeData,

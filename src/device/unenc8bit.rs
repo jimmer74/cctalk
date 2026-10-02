@@ -5,8 +5,6 @@ use super::{
     DelayNs, Init, InitStatus, MASTER_ADDR, Msg8, PhantomData, Read, UnInit, Unenc8Bit, Write,
     hVec,
 };
-use core::fmt::Display;
-use thiserror::Error;
 
 /*
  *
@@ -14,7 +12,22 @@ use thiserror::Error;
  *
  * */
 impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
-    pub fn read_buff_events(
+    // CcTalkHeader::ReadBufferedBillEvents returns a history of bill events:
+    //
+    // Received 11-byte data-packet (from Cctalk spec part 2):
+    //
+    // [ event counter ]
+    // [ result 1A ] [ result 1B ]
+    // [ result 2A ] [ result 2B ]
+    // [ result 3A ] [ result 3B ]
+    // [ result 4A ] [ result 4B ]
+    // [ result 5A ] [ result 5B ]
+    //
+    // Can only extract last 5 events, so frequent polling is required so that more
+    // than 5 events haven't occured since last poll.
+    // '
+
+    fn read_buff_events(
         &mut self,
         timeout_ms: Option<u32>,
     ) -> Result<[u8; BILL_EVENT_BUFF_LEN], CctalkTransmissionError>
@@ -70,9 +83,26 @@ impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
 
         events
     }
+
+    pub fn read_events(
+        &mut self,
+        timeout_ms: Option<u32>,
+    ) -> Result<hVec<EventResult, 5>, CctalkTransmissionError>
+    where
+        D: DelayNs,
+        U: Read + Write,
+    {
+        let event_buf = self.read_buff_events(timeout_ms)?;
+
+        let events = self.process_events(event_buf);
+
+        Ok(events)
+    }
 }
 
-struct EventResult {
+#[derive(Default, Debug)]
+pub struct EventResult {
+    #[allow(unused)]
     a: u8,
     b: u8,
 }
@@ -86,6 +116,7 @@ impl EventResult {
         }
     }
 
+    #[allow(unused)]
     fn is_escrow(&self) -> bool {
         self.b == 1
     }

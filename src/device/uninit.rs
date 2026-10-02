@@ -40,7 +40,8 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         }
 
         //Encryption Key/Status
-        let encrypted = CctalkEncKey::CctalkUnEncrypted; //cctalk.retrieve_enc_key(self.addr, Some(200))?;
+
+        let encrypted = self.retrieve_enc_key(self.addr, Some(200))?;
 
         //Manufacturer
         res = self.header_only(self.addr, RequestManufacturerId, None)?;
@@ -86,10 +87,10 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        let header = msg.header();
-        if header != CcTalkHeader::Ack {
+        if msg.header() != CcTalkHeader::Ack {
             return Err(CctalkTransmissionError::CctalkFailedToAck(header));
         };
+
         Ok(msg)
     }
 
@@ -148,7 +149,11 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         D: DelayNs,
         U: Read + Write,
     {
-        let msg = Msg16::new(addr, CcTalkHeader::RequestEncryptionKey, hVec::new());
+        let msg = Msg16::new(
+            addr,
+            CcTalkHeader::RequestEncryptionSupport,
+            hVec::from_array(REQ_ENC_SUPPORT_BYTES),
+        );
 
         let tx_bytes = msg
             .try_to_bytes()
@@ -159,13 +164,13 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
             Ok(rx_bytes) => {
                 let msg = Msg16::try_from_bytes(rx_bytes.as_slice()).ok();
                 if let Some(res) = msg {
-                    println!("encryption key: {:?}", res.data());
+                    println!("encryption support: {:?}", res.data());
 
                     let key = res.data();
                     if key.is_empty() {
                         return Ok(CctalkEncKey::CctalkUnEncrypted);
                     } else {
-                        return Ok(CctalkEncKey::CctalkDESKey(key.clone()));
+                        return Ok(CctalkEncKey::CctalkEncSupport(key.clone()));
                     }
                 } else {
                     return Ok(CctalkEncKey::CctalkUnEncrypted);

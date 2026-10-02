@@ -23,6 +23,7 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
 
 const BILL_EVENT_BUFF_LEN: usize = 11;
+const REQ_ENC_SUPPORT_BYTES: [u8; 6] = [170, 85, 0, 0, 85, 170];
 
 #[derive(Debug)]
 pub struct CctalkDevice<E, I, U, D> {
@@ -130,7 +131,7 @@ where
 pub enum CctalkEncKey {
     #[default]
     CctalkUnEncrypted,
-    CctalkDESKey(hVec<u8, 255>),
+    CctalkEncSupport(hVec<u8, 255>),
 }
 
 #[derive(Default, Debug, Clone, PartialEq, PartialOrd)]
