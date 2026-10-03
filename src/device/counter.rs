@@ -5,6 +5,10 @@ pub struct EventCounter(u8);
 
 #[allow(unused)]
 impl EventCounter {
+    pub fn new(value: u8) -> Self {
+        EventCounter(value)
+    }
+
     pub fn increase(&mut self) {
         if self.0 == 255 {
             self.0 = 1;

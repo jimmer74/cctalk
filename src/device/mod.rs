@@ -31,6 +31,7 @@ pub struct CctalkDevice<E, I, U, D> {
     pub kind: DevKind,
     pub manu: String,
     pub model: String,
+    currancy: Option<Currancy>,
     cctalk: SharedCctalk<U, D>,
     chksum: Chksum,
     encrypted: EncKey,
@@ -39,6 +40,52 @@ pub struct CctalkDevice<E, I, U, D> {
     _enc_state: PhantomData<E>,
     _init_state: PhantomData<I>,
 }
+
+//TODO:
+// #[derive(Debug, Clone, Default)]
+// struct Dev {
+// kind: DevKind,
+// manufacturer: CctalkManu,
+// model: String
+//
+// }
+
+#[derive(Debug, Clone, Copy)]
+struct Currancy {
+    slots: CurrancySlots,
+    sf: ScalingFactor,
+    cc: [u8; 2],
+    rev: [u8; 256],
+}
+
+impl Default for Currancy {
+    fn default() -> Self {
+        Self {
+            slots: CurrancySlots::default(),
+            sf: ScalingFactor::default(),
+            cc: [0u8; 2],
+            rev: [0u8; 256],
+        }
+    }
+}
+#[allow(unused)]
+impl Currancy {
+    fn slot_to_currancy(&self, slot: u8) -> u16 {
+        self.slots[slot as usize] as u16 * self.sf[0] as u16 * 2
+            ^ self.sf[1] as u16 / self.sf[2] as u16
+    }
+
+    fn is_occupied(&self, slot: u8) -> bool {
+        self.slots[slot as usize] != 0
+    }
+
+    fn num_slots(&self) -> usize {
+        self.slots.iter().filter(|f| *f != &0u8).count()
+    }
+}
+
+type CurrancySlots = [u8; 16];
+type ScalingFactor = [u8; 3];
 
 #[derive(Default, Debug, Clone)]
 pub enum CctalkDeviceCRC {
@@ -127,11 +174,24 @@ where
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Default, Debug, Clone)]
 pub enum CctalkEncKey {
     #[default]
     CctalkUnEncrypted,
-    CctalkEncSupport(hVec<u8, 255>),
+    CctalkEncSupport(CcTalkEncryptionStatus),
+}
+
+#[allow(unused)]
+#[derive(Default, Debug, Clone)]
+pub struct CcTalkEncryptionStatus {
+    proto_level: u8,
+    command_level: u8,
+    proto_key_size: u8,
+    com_key_size: u8,
+    com_block_size: u8,
+    trusted_mode: u8,
+    bnv214365: [u8; 3],
+    des: [u8; 8],
 }
 
 #[derive(Default, Debug, Clone, PartialEq, PartialOrd)]

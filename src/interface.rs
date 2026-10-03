@@ -144,8 +144,6 @@ where
                     if rx_bytes != ADDR_POL {
                         println!("echo: {:?} does not match {:?}", rx_bytes, ADDR_POL);
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
-                    } else {
-                        println!("echo matches!");
                     }
                 }
                 Err(e) => {

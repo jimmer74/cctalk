@@ -1,4 +1,7 @@
-use crate::errors::EventError;
+use crate::{
+    device::{Currancy, EC, counter::EventCounter},
+    errors::EventError,
+};
 
 use super::{
     BILL_EVENT_BUFF_LEN, CcTalkHeader, CctalkDevice, CctalkTransmissionError, DEFAULT_TIMEOUT_MS,
@@ -6,10 +9,13 @@ use super::{
     hVec,
 };
 
-/*
+/* =====================================================================================
  *
- *      Only for initialised 8bit devices
  *
+ *                  Only for initialised 8bit devices
+ *
+ *
+ * =====================================================================================
  * */
 impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
     // CcTalkHeader::ReadBufferedBillEvents returns a history of bill events:
@@ -122,12 +128,14 @@ impl EventResult {
     }
 }
 
-/*
+/* =====================================================================================
  *
- *  8bit devices that have been probed, but not initialised
  *
+ *          8bit devices that have been probed, but not initialised
+ *
+ *
+ * =====================================================================================
  */
-
 impl<U, D> CctalkDevice<Unenc8Bit, UnInit, U, D>
 where
     U: Read + Write,
@@ -143,97 +151,10 @@ where
     {
         /*
          *
-         *      Get all note slots
+         *      Get currency
          *
          * */
-
-        let mut country_code: [u8; 2] = [0x00, 0x00];
-        for i in 1..=16 {
-            let mut payload: hVec<u8, 255> = hVec::new();
-            _ = payload.push(i);
-            let msg = Msg8::new(self.addr, MASTER_ADDR, CcTalkHeader::RequestBillId, payload);
-            let tx_bytes = msg
-                .try_to_bytes()
-                .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-            let rx_bytes = self.transfer(tx_bytes, 80)?;
-            let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-                .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-            let dat = msg.data().clone();
-            if *dat != [0, 0, 0, 0, 0, 0, 0] {
-                println!("Note Slot {}: {:?}/{:?}", i, msg.data(), msg.data_str());
-
-                for (j, _) in country_code.clone().iter().enumerate() {
-                    if j < 2 {
-                        country_code[j] = dat[j];
-                    }
-                }
-            } else {
-                println!("Note slot {} is unoccupied", i);
-            }
-        }
-        println!(
-            "Country code: {:?} / {}",
-            country_code,
-            String::from_utf8_lossy(&country_code[..])
-        );
-
-        /*
-         *
-         *      Request Country Scaling Factor
-         *
-         * */
-
-        let payload: hVec<u8, 255> = hVec::from_array(country_code);
-        let msg = Msg8::new(
-            self.addr,
-            MASTER_ADDR,
-            CcTalkHeader::RequestCountryScalingFactor,
-            payload,
-        );
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        let rx_bytes = self.transfer(tx_bytes, 80)?;
-
-        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        let dat = msg.data();
-
-        println!("RCSF: {:?}", dat);
-
-        /*
-         *
-         *      Request Currency Revision
-         *
-         * */
-        let payload: hVec<u8, 255> = hVec::new(); //hVec::from_array(country_code);
-        let msg = Msg8::new(
-            self.addr,
-            MASTER_ADDR,
-            CcTalkHeader::RequestCurrencyRevision,
-            payload,
-        );
-
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        match self.transfer(tx_bytes, 80) {
-            Ok(bytes) => {
-                let msg = Msg8::try_from_bytes(bytes.as_slice()).ok();
-                if let Some(msg) = msg {
-                    println!("Currency Rev: {:?}", String::from_utf8_lossy(msg.data()));
-                } else {
-                    println!("Error Curr Rev failed to recieve: {:?}", bytes);
-                }
-            }
-            Err(e) => {
-                println!("error curr revision: {}", e)
-            }
-        }
+        self.currancy = Some(self.get_currency()?);
 
         /*
          *
@@ -265,25 +186,19 @@ where
 
         /*
          *
-         *      Modify Inhibit Status
+         *      Modify Inhibit Status for all (occupied) slots
          *
          * */
-        let payload: hVec<u8, 255> = hVec::from_array([0xFF, 0xFF]);
-        let msg = Msg8::new(
-            self.addr,
-            MASTER_ADDR,
-            CcTalkHeader::ModifyInhibitStatus,
-            payload,
-        );
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        let rx_bytes = self.transfer(tx_bytes, 80)?;
-        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        println!("mod master inhibit: {}", msg.header());
+        let mut inhabited_slots = [0u8; 16];
+        let mut n = 0usize;
+        for slot in self.currancy.unwrap().slots {
+            if self.currancy.unwrap().is_occupied(slot) {
+                inhabited_slots[n] = slot;
+                n = n + 1;
+            }
+        }
+        self.uninhibit_slots(&inhabited_slots[0..n])?;
 
         /*
          *
@@ -291,7 +206,44 @@ where
          *
          * */
 
-        let payload: hVec<u8, 255> = hVec::from_array([0x01]); //hVec::from_array(country_code);
+        let ack = self.set_master_inhibit(false)?;
+        println!("mod master inhibit: {}", ack);
+
+        /*
+         *
+         * Get/Set event counter
+         *
+         */
+
+        let ec = self.get_event_counter()?;
+        self.event_counter = ec.clone();
+        self.last_event = ec;
+
+        // drop(cctalk);
+
+        Ok(CctalkDevice {
+            addr: self.addr,
+            kind: self.kind,
+            manu: self.manu,
+            model: self.model,
+            currancy: self.currancy,
+            cctalk: self.cctalk,
+            chksum: self.chksum,
+            encrypted: self.encrypted,
+            event_counter: self.event_counter,
+            last_event: self.last_event,
+            _enc_state: PhantomData,
+            _init_state: PhantomData,
+        })
+    }
+
+    fn set_master_inhibit(&mut self, value: bool) -> Result<CcTalkHeader, CctalkTransmissionError> {
+        let inhibit = match value {
+            true => 0x00,
+            false => 0x01,
+        };
+
+        let payload: hVec<u8, 255> = hVec::from_array([inhibit]); //hVec::from_array(country_code);
         let msg = Msg8::new(
             self.addr,
             MASTER_ADDR,
@@ -305,33 +257,173 @@ where
         let rx_bytes = self.transfer(tx_bytes, 80)?;
         let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-        println!("mod master inhibit: {}", msg.header());
 
-        // drop(cctalk);
+        Ok(msg.header())
+    }
 
-        Ok(CctalkDevice {
-            addr: self.addr,
-            kind: self.kind,
-            manu: self.manu,
-            model: self.model,
-            cctalk: self.cctalk,
-            chksum: self.chksum,
-            encrypted: self.encrypted,
-            event_counter: self.event_counter,
-            last_event: self.last_event,
-            _enc_state: PhantomData,
-            _init_state: PhantomData,
-        })
+    fn get_event_counter(&mut self) -> Result<EC, CctalkTransmissionError> {
+        let payload = hVec::new();
+        let msg = Msg8::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::ReadBufferedBillEvents,
+            payload,
+        );
+        let tx_bytes = msg
+            .try_to_bytes()
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        let rx_bytes = self.transfer(tx_bytes, 80)?;
+        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let data_bytes = msg.data();
+
+        let ev_cnt = data_bytes[0];
+
+        Ok(EventCounter::new(ev_cnt))
+    }
+
+    fn uninhibit_slots(&mut self, slots: &[u8]) -> Result<(), CctalkTransmissionError> {
+        let mut tx_u16 = 0u16;
+
+        for val in slots {
+            tx_u16 |= 1 << val;
+        }
+
+        let tx_array: [u8; 2] = [(tx_u16 >> 8) as u8, (tx_u16 & 0xFF) as u8];
+
+        let payload: hVec<u8, 255> = hVec::from_array(tx_array);
+        let msg = Msg8::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::ModifyInhibitStatus,
+            payload,
+        );
+
+        let tx_bytes = msg
+            .try_to_bytes()
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        let rx_bytes = self.transfer(tx_bytes, 80)?;
+        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        println!("mod slots {:#b} uninhibited: {}", tx_u16, msg.header());
+        Ok(())
+    }
+
+    fn get_currency(&mut self) -> Result<Currancy, CctalkTransmissionError> {
+        let mut currancy = Currancy::default();
+        let mut country_code: [u8; 2] = [0u8; 2];
+        let mut slot_amt: [u8; 4] = [0u8; 4];
+
+        /*
+         *
+         *      Request Slots and Country Code
+         *
+         * */
+        for i in 1..=16 {
+            let mut payload: hVec<u8, 255> = hVec::new();
+            _ = payload.push(i);
+            let msg = Msg8::new(self.addr, MASTER_ADDR, CcTalkHeader::RequestBillId, payload);
+            let tx_bytes = msg
+                .try_to_bytes()
+                .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+            let rx_bytes = self.transfer(tx_bytes, 80)?;
+            let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
+                .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+            let dat = msg.data().clone();
+            if *dat != [0, 0, 0, 0, 0, 0, 0] {
+                for (j, _) in country_code.clone().iter().enumerate() {
+                    if j < 2 {
+                        country_code[j] = dat[j];
+                    } else if j >= 2 || j < 6 {
+                        slot_amt[j - 2] = dat[j];
+                    }
+                }
+
+                let slot_str = String::from_utf8_lossy(&slot_amt[..]);
+                let slot_amt: u16 = slot_str.parse().unwrap();
+
+                currancy.slots[i as usize] = slot_amt as u8;
+                if currancy.cc == [0x00, 0x00] {
+                    currancy.cc = country_code;
+                }
+            } else {
+                println!("Note slot {} is unoccupied", i);
+            }
+        }
+
+        /*
+         *
+         *      Request Country Scaling Factor
+         *
+         * */
+
+        let payload: hVec<u8, 255> = hVec::from_array(country_code);
+        let msg = Msg8::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::RequestCountryScalingFactor,
+            payload,
+        );
+        let tx_bytes = msg
+            .try_to_bytes()
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        let rx_bytes = self.transfer(tx_bytes, 80)?;
+
+        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        for (i, dat) in msg.data().iter().enumerate() {
+            currancy.sf[i] = *dat;
+        }
+
+        /*
+         *
+         *      Request Currency Revision
+         *
+         * */
+        let payload: hVec<u8, 255> = hVec::new(); //hVec::from_array(country_code);
+        let msg = Msg8::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::RequestCurrencyRevision,
+            payload,
+        );
+
+        let tx_bytes = msg
+            .try_to_bytes()
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        match self.transfer(tx_bytes, 80) {
+            Ok(bytes) => {
+                let msg = Msg8::try_from_bytes(bytes.as_slice()).ok();
+                if let Some(msg) = msg {
+                    for (i, dat) in msg.data().iter().enumerate() {
+                        currancy.rev[i] = *dat;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("error curr revision: {}", e)
+            }
+        }
+
+        Ok(currancy)
     }
 }
 
-/*
+/* =====================================================================================
  *
  *
- * Any 8bit device, in any state of initialisation
+ *              Any 8bit device, in any state of initialisation
  *
  *
- * */
+ * =====================================================================================
+ */
 impl<I, U, D> CctalkDevice<Unenc8Bit, I, U, D>
 where
     I: InitStatus,
