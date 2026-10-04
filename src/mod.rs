@@ -126,7 +126,7 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         }
 
         //Encryption Key/Status
-        let encrypted = CctalkEncKey::CctalkUnEncrypted; //cctalk.retrieve_enc_key(self.addr, Some(200))?;
+        let encrypted = CctalkEncKey::CctalkUnEncrypted;
 
         //Manufacturer
         res = self.header_only(self.addr, RequestManufacturerId, None)?;
@@ -255,10 +255,6 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
                     return Ok(CctalkEncKey::CctalkUnEncrypted);
                 }
             }
-            // Err(CctalkTransmissionError::CctalkMessageError(e)) => {
-            //     println!("device doesn't support/predates encryption: {}", e);
-            //     return Ok(CctalkEncKey::CctalkUnEncrypted);
-            // }
             Err(e) => {
                 println!("Encryption key error: {}", e);
                 return Err(e);
@@ -289,7 +285,6 @@ where
         if cctalk.echo {
             match cctalk.read_bytes_exact(timeout_ms, bytes.len()) {
                 Ok(rx_bytes) => {
-                    // println!("echo matches - discarding!");
                     if rx_bytes != bytes {
                         println!("echo does not match");
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
@@ -361,10 +356,7 @@ where
         Ok(rx_msg)
     }
 
-    pub fn init(
-        mut self,
-        // cctalk: &mut Cctalk<UART, DELAY>,
-    ) -> Result<CctalkDevice<Unenc8Bit, Init, U, D>, CctalkTransmissionError>
+    pub fn init(mut self) -> Result<CctalkDevice<Unenc8Bit, Init, U, D>, CctalkTransmissionError>
     where
         D: DelayNs,
         U: Read + Write,
@@ -437,7 +429,7 @@ where
          *      Request Currency Revision
          *
          * */
-        let payload: hVec<u8, 255> = hVec::new(); //hVec::from_array(country_code);
+        let payload: hVec<u8, 255> = hVec::new();
         let msg = Msg8::new(
             self.addr,
             MASTER_ADDR,
@@ -519,7 +511,7 @@ where
          *
          * */
 
-        let payload: hVec<u8, 255> = hVec::from_array([0x01]); //hVec::from_array(country_code);
+        let payload: hVec<u8, 255> = hVec::from_array([0x01]);
         let msg = Msg8::new(
             self.addr,
             MASTER_ADDR,
@@ -534,8 +526,6 @@ where
         let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
         println!("mod master inhibit: {}", msg.header());
-
-        // drop(cctalk);
 
         Ok(CctalkDevice {
             addr: self.addr,

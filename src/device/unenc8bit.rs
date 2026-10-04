@@ -157,10 +157,7 @@ where
     U: Read + Write,
     D: DelayNs,
 {
-    pub fn init(
-        mut self,
-        // cctalk: &mut Cctalk<UART, DELAY>,
-    ) -> Result<CctalkDevice<Unenc8Bit, Init, U, D>, CctalkTransmissionError>
+    pub fn init(mut self) -> Result<CctalkDevice<Unenc8Bit, Init, U, D>, CctalkTransmissionError>
     where
         D: DelayNs,
         U: Read + Write,
@@ -209,18 +206,6 @@ where
         let header = self.inhibit_all_slots(false)?;
         println!("uninhibeted all slots, result: {}", header);
 
-        // let curr = self.currancy.unwrap();
-        // let mut inhabited_slots = [0u8; 16];
-        // let mut n = 0usize;
-        // for slot in curr.slots {
-        //     if curr.is_occupied(n) {
-        //         println!("looking at slot: {}", n);
-        //         println!("filling slot {} with {}", n, slot);
-        //         inhabited_slots[n] = slot;
-        //     }
-        //
-        //     n = n + 1;
-        // }
         /*
          *
          *      Modify Master Inhibit Status
@@ -326,10 +311,10 @@ where
         let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        // println!("mod slots {:#b} uninhibited: {}", tx_u16, msg.header());
         Ok(msg.header())
     }
 
+    #[allow(unused)]
     fn uninhibit_slots(&mut self, slots: &[u8]) -> Result<CcTalkHeader, CctalkTransmissionError> {
         let mut tx_u16 = 0u16;
 

@@ -41,14 +41,11 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         }
 
         //Encryption Key/Status
-
         let encrypted = match self.retrieve_enc_key(self.addr, Some(200)) {
             Ok(val) => val,
             Err(_e) => EncKey::CctalkUnEncrypted,
         };
 
-        // let encrypted = EncKey::CctalkUnEncrypted;
-        //println!("encryption: {:?}", encrypted);
         //Manufacturer
         res = self.header_only(self.addr, RequestManufacturerId, None)?;
         let manu = String::from_utf8(res.data().to_vec()).unwrap();
@@ -56,8 +53,6 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         //Model
         res = self.header_only(self.addr, CcTalkHeader::RequestProductCode, None)?;
         let model = String::from_utf8(res.data().to_vec()).unwrap();
-
-        // drop(cctalk);
 
         Ok(CctalkDevice {
             addr: addr,
@@ -169,7 +164,6 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         match self.transfer(tx_bytes, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)) {
-            //possibly encrypted (or encryption aware and set to [00,00,00])
             Ok(rx_bytes) => {
                 println!("enc bytes: {:?}", rx_bytes);
                 if rx_bytes.len() > 0 {

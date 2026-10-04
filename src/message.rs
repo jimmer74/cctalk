@@ -17,11 +17,7 @@ impl CctalkMessage<CctalkCRC16ChksumMessage> {
     //if everything else is correct, then message will be correct
 
     pub fn new(dest: u8, header: CcTalkHeader, data: hVec<u8, 255>) -> Self {
-        // let data_sum = data.iter().map(|&x| x as u16).sum::<u16>();
         let data_len = data.len() as u8;
-        // let proto_sum: u8 =
-        //     (dest as u16 + data_len as u16 + src as u16 + header as u16 + data_sum) as u8;
-        // let chksum = Some((256 - proto_sum as u16) as u8);
         let mut msg = CctalkCRC16ChksumMessage {
             dest,
             len: data_len,
@@ -377,11 +373,9 @@ impl CctalkCRC16ChksumMessage {
 
         _ = container.push(self.dest);
         _ = container.push(self.len);
-        // _ = container.push(0x00);
         _ = container.push(self.header);
 
         if !self.data.is_empty() {
-            // println!("found data array: {:?}, adding to chksum", self.data);
             for dat in self.data.clone() {
                 _ = container.push(dat);
             }
@@ -419,8 +413,6 @@ impl Cctalk8BitChksumMessage {
 
 #[cfg(test)]
 mod tests {
-    // use embedded_hal_mock::eh0::i2c::Transaction;
-
     use super::*;
     use crate::headers::CcTalkHeader::ResetDevice;
     use crate::message::CctalkMessage;
@@ -513,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_to_bytes() {
-        let mut testcase = CctalkMessage::<Cctalk8BitChksumMessage>::new(
+        let testcase = CctalkMessage::<Cctalk8BitChksumMessage>::new(
             0x02,
             0x01,
             CcTalkHeader::UploadCalibrationData,

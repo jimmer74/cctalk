@@ -82,9 +82,6 @@ impl Currancy {
 
     fn num_slots(&self) -> usize {
         let num_slots = self.slots.iter().filter(|f| *f != &0u8).count();
-
-        // println!("num_slots: {}", num_slots);
-
         num_slots
     }
 }
