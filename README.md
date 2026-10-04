@@ -60,107 +60,44 @@ fn main() -> Result<(), Box<dyn Error>> {
         
         let mut device = device.init()?;
 
-        let mut old_res: [u8; 11] = [0u8; 11];
-
+        let mut credits = 0_f32;
         loop {
-            let res = device.read_buff_events(Some(20))?;
-            if old_res != res {
-                
-                println!("res: {:?}", res);
+            let res = device.get_buffered_credits()?;
 
-                old_res = res;
+            if !res.is_empty() {
+                for credit in res {
+                    println!("Accepted £{:.2} note", credit);
+                    credits += credit;
+                    println!("Total credit: £{:.2}", credits);
+                }
             }
+
             sleep(Duration::from_millis(200));
         }
-         
     }
+         
+    Ok(())
+    
 }
 ```
 
-Terminal Output:
+Terminal Output (showing acceptance of a £10 note):
 ```
 scanning addresses 8bit addresses....
-echo matches!
 received addresses: [40]
 probing addr: 40
-device: CctalkDevice {
-    addr: 40,
-    kind: NoteAcceptor,
-    manu: "ITL",
-    model: "NV10",
-    cctalk: SharedCctalk(
-        Mutex {
-            data: Cctalk {
-                uart: Uart {
-                    inner: UartInner {
-                        device: File {
-                            fd: 4,
-                            path: "/dev/ttyS0",
-                            read: true,
-                            write: true,
-                        },
-                        fd: 4,
-                        rtscts_mode: Some(
-                            (
-                                Alt5,
-                                Alt5,
-                            ),
-                        ),
-                        rtscts_pins: None,
-                        blocking_read: false,
-                        blocking_write: true,
-                        baud_rate: 9600,
-                        parity: None,
-                        parity_check: None,
-                        data_bits: 8,
-                        stop_bits: 1,
-                        software_flow_control: false,
-                        hardware_flow_control: false,
-                    },
-                },
-                delay: Delay,
-                echo: true,
-            },
-            poisoned: false,
-            ..
-        },
-    ),
-    chksum: Simple8bit,
-    encrypted: CctalkUnEncrypted,
-    event_counter: EventCounter(
-        0,
-    ),
-    last_event: EventCounter(
-        0,
-    ),
-    _enc_state: PhantomData<cctalk::device::Unenc8Bit>,
-    _init_state: PhantomData<cctalk::device::UnInit>,
-}
-Note Slot 1: [71, 66, 48, 48, 48, 53, 65]/"GB0005A"
-Note Slot 2: [71, 66, 48, 48, 49, 48, 65]/"GB0010A"
-Note Slot 3: [71, 66, 48, 48, 50, 48, 65]/"GB0020A"
-Note Slot 4: [71, 66, 48, 48, 53, 48, 65]/"GB0050A"
-Note slot 5 is unoccupied
-Note slot 6 is unoccupied
-Note slot 7 is unoccupied
-Note slot 8 is unoccupied
-Note slot 9 is unoccupied
-Note slot 10 is unoccupied
-Note slot 11 is unoccupied
-Note slot 12 is unoccupied
-Note slot 13 is unoccupied
-Note slot 14 is unoccupied
-Note slot 15 is unoccupied
-Note slot 16 is unoccupied
-Country code: [71, 66] / GB
-RCSF: [100, 0, 2]
-Currency Rev: "GBP07H54"
+enc bytes: [1, 17, 40, 0, 0, 0, 24, 64, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 46]
+slot_data: [71, 66, 48, 48, 48, 53, 65], slot_amt: £5
+slot_data: [71, 66, 48, 48, 49, 48, 65], slot_amt: £10
+slot_data: [71, 66, 48, 48, 50, 48, 65], slot_amt: £20
+currency_sf: [100, 0, 2], currency_country: GB
 mod bill op mode: Ack
+uninhibeted all slots, result: Ack
 mod master inhibit: Ack
-mod master inhibit: Ack
-res: [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-res: [2, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0]
-^C
+error: InvalidBillValidation
+note_val: 10, multiplier: 100, sf: 1, dp: 100
+Accepted £10.00 note
+Total credit: £10.00
 ```
 
 ## CCTalk Packet description
