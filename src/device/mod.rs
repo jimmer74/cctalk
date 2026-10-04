@@ -72,8 +72,17 @@ impl Default for Currancy {
 #[allow(unused)]
 impl Currancy {
     pub fn slot_to_currancy(&self, slot: u8) -> f32 {
-        (self.slots[slot as usize] as f32) * (self.sf[0] as f32) * (2 ^ self.sf[1]) as f32
-            / (self.sf[2] as f32)
+        let note_val = self.slots[slot as usize] as f32;
+        let multiplier = self.sf[0] as f32; //to get value of currency in minor units eg pence
+        let sf = (10_u32.pow(self.sf[1] as u32)) as f32; //value of currancy relative to minor unit
+        let dp = (10_u32.pow(self.sf[2] as u32)) as f32; //divisor to get final currency in terms of major
+        //units (eg pounds)
+
+        println!(
+            "note_val: {}, multiplier: {}, sf: {}, dp: {} ",
+            note_val, multiplier, sf, dp
+        );
+        (note_val * multiplier * sf) / dp
     }
 
     fn is_occupied(&self, index: usize) -> bool {
@@ -151,7 +160,7 @@ where
         D: DelayNs,
         U: Read + Write,
     {
-        let mut cctalk = self.cctalk.lock().unwrap();
+        let mut cctalk = self.cctalk.lock();
 
         _ = cctalk.write_bytes(bytes.clone())?;
 

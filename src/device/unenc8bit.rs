@@ -168,7 +168,11 @@ where
          *
          * */
         self.currancy = Some(self.get_currency()?);
-
+        println!(
+            "currency_sf: {:?}, currency_country: {}",
+            self.currancy.unwrap().sf,
+            String::from_utf8_lossy(&self.currancy.unwrap().cc)
+        );
         /*
          *
          *      Modify Bill Operating Mode
