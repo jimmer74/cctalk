@@ -4,14 +4,20 @@ use heapless::Vec as hVec;
 
 pub type Msg8 = CctalkMessage<Cctalk8BitChksumMessage>;
 pub type Msg16 = CctalkMessage<CctalkCRC16ChksumMessage>;
+// type TryFromBytesFn = fn(data: &[u8]) -> Result<CctalkMessage<CctalkCRC16ChksumMessage>, CctalkMessageError>;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct CctalkMessage<T> {
     value: T,
 }
 
-// type TryFromBytesFn = fn(data: &[u8]) -> Result<CctalkMessage<CctalkCRC16ChksumMessage>, CctalkMessageError>;
-
+/*====================================================================
+ *
+ *
+ *              These fn's are specific for the Msg16 type
+ *
+ *
+ *==================================================================== */
 impl CctalkMessage<CctalkCRC16ChksumMessage> {
     //length and chksum are calced from supplied data (source, dest, header, data).
     //if everything else is correct, then message will be correct
@@ -104,6 +110,13 @@ impl CctalkMessage<CctalkCRC16ChksumMessage> {
         Ok(CctalkMessage { value: rx })
     }
 }
+/*======================================================================
+ *
+ *
+ *              These fn's are specific for the Msg8 type
+ *
+ *
+ *====================================================================== */
 
 impl CctalkMessage<Cctalk8BitChksumMessage> {
     pub fn new(dest: u8, src: u8, header: CcTalkHeader, data: hVec<u8, 255>) -> Self {
@@ -221,7 +234,13 @@ impl CctalkMessage<Cctalk8BitChksumMessage> {
         Ok(tx_buf)
     }
 }
-
+/*=====================================================================================
+ *
+ *
+ *          These fn's work for any/all message types (eg Msg8,Msg16, etc)
+ *
+ *
+ *===================================================================================== */
 impl<M> CctalkMessage<M>
 where
     M: MessageType,
