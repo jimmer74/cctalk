@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+extern crate alloc;
+extern crate spin;
+use alloc::sync::Arc;
+use spin::{Mutex, MutexGuard};
+// use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::headers::CcTalkHeader;
 use crate::{errors::CctalkTransmissionError, message::Msg16};
@@ -119,9 +123,8 @@ where
         Self(Arc::new(Mutex::new(cctalk)))
     }
 
-    pub fn lock(
-        &self,
-    ) -> Result<MutexGuard<'_, Cctalk<U, D>>, PoisonError<MutexGuard<'_, Cctalk<U, D>>>> {
+    pub fn lock(&self) -> MutexGuard<'_, Cctalk<U, D>> {
+        // Result<MutexGuard<'_, Cctalk<U, D>>, PoisonError<MutexGuard<'_, Cctalk<U, D>>>> {
         self.0.lock()
     }
 
@@ -134,7 +137,7 @@ where
      *****************************************************************/
 
     pub fn addr_scan(&self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
-        let mut cctalk = self.0.lock().unwrap();
+        let mut cctalk = self.0.lock();
 
         let _ = cctalk.write_bytes(hVec::from_array(ADDR_POL))?;
 
@@ -163,7 +166,7 @@ where
         &mut self,
         timeout_ms: u32,
     ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
-        let mut cctalk = self.lock().unwrap();
+        let mut cctalk = self.lock();
 
         let tx = Msg16::new(0x00, CcTalkHeader::AddressPoll, hVec::new());
         let tx_bytes = tx
@@ -262,7 +265,7 @@ mod tests {
 
         let mut uart = UartMock::new(&expectations);
         let mut cctalk = SharedCctalk::new(uart.clone(), timer, true);
-        let mut cctalk = cctalk.lock().unwrap();
+        let mut cctalk = cctalk.lock();
         let result = cctalk.read_bytes_exact(5, 5);
 
         assert_ne!(result.unwrap(), rx_bytes); // WARN: left 4 bytes, right 5 bytes - currently no error
@@ -292,7 +295,7 @@ mod tests {
 
         let mut uart = UartMock::new(&expectations);
         let mut cctalk = SharedCctalk::new(uart.clone(), timer, true);
-        let mut cctalk = cctalk.lock().unwrap();
+        let mut cctalk = cctalk.lock();
         let result = cctalk.read_bytes(2);
 
         assert_eq!(result.unwrap(), rx_bytes);
