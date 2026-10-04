@@ -68,19 +68,24 @@ impl Default for Currancy {
         }
     }
 }
+
 #[allow(unused)]
 impl Currancy {
-    fn slot_to_currancy(&self, slot: u8) -> u16 {
-        self.slots[slot as usize] as u16 * self.sf[0] as u16 * 2
-            ^ self.sf[1] as u16 / self.sf[2] as u16
+    pub fn slot_to_currancy(&self, slot: u8) -> f32 {
+        (self.slots[slot as usize] as f32) * (self.sf[0] as f32) * (2 ^ self.sf[1]) as f32
+            / (self.sf[2] as f32)
     }
 
-    fn is_occupied(&self, slot: u8) -> bool {
-        self.slots[slot as usize] != 0
+    fn is_occupied(&self, index: usize) -> bool {
+        self.slots[index] != 0
     }
 
     fn num_slots(&self) -> usize {
-        self.slots.iter().filter(|f| *f != &0u8).count()
+        let num_slots = self.slots.iter().filter(|f| *f != &0u8).count();
+
+        // println!("num_slots: {}", num_slots);
+
+        num_slots
     }
 }
 

@@ -104,6 +104,22 @@ impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
 
         Ok(events)
     }
+
+    pub fn get_buffered_credits(&mut self) -> Result<hVec<f32, 5>, CctalkTransmissionError>
+    where
+        D: DelayNs,
+        U: Read + Write,
+    {
+        let mut credits: hVec<f32, 5> = hVec::new();
+
+        let events = self.read_events(Some(20))?;
+
+        for event in events {
+            _ = credits.push(self.currancy.unwrap().slot_to_currancy(event.a));
+        }
+
+        Ok(credits)
+    }
 }
 
 #[derive(Default, Debug)]
@@ -190,16 +206,21 @@ where
          *
          * */
 
-        let mut inhabited_slots = [0u8; 16];
-        let mut n = 0usize;
-        for slot in self.currancy.unwrap().slots {
-            if self.currancy.unwrap().is_occupied(slot) {
-                inhabited_slots[n] = slot;
-                n = n + 1;
-            }
-        }
-        self.uninhibit_slots(&inhabited_slots[0..n])?;
+        let header = self.inhibit_all_slots(false)?;
+        println!("uninhibeted all slots, result: {}", header);
 
+        // let curr = self.currancy.unwrap();
+        // let mut inhabited_slots = [0u8; 16];
+        // let mut n = 0usize;
+        // for slot in curr.slots {
+        //     if curr.is_occupied(n) {
+        //         println!("looking at slot: {}", n);
+        //         println!("filling slot {} with {}", n, slot);
+        //         inhabited_slots[n] = slot;
+        //     }
+        //
+        //     n = n + 1;
+        // }
         /*
          *
          *      Modify Master Inhibit Status
@@ -237,7 +258,10 @@ where
         })
     }
 
-    fn set_master_inhibit(&mut self, value: bool) -> Result<CcTalkHeader, CctalkTransmissionError> {
+    pub fn set_master_inhibit(
+        &mut self,
+        value: bool,
+    ) -> Result<CcTalkHeader, CctalkTransmissionError> {
         let inhibit = match value {
             true => 0x00,
             false => 0x01,
@@ -283,11 +307,34 @@ where
         Ok(EventCounter::new(ev_cnt))
     }
 
-    fn uninhibit_slots(&mut self, slots: &[u8]) -> Result<(), CctalkTransmissionError> {
+    fn inhibit_all_slots(&mut self, value: bool) -> Result<CcTalkHeader, CctalkTransmissionError> {
+        let tx_array = if value { [0x00, 0x00] } else { [0xFF, 0xFF] };
+
+        let payload: hVec<u8, 255> = hVec::from_array(tx_array);
+        let msg = Msg8::new(
+            self.addr,
+            MASTER_ADDR,
+            CcTalkHeader::ModifyInhibitStatus,
+            payload,
+        );
+
+        let tx_bytes = msg
+            .try_to_bytes()
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        let rx_bytes = self.transfer(tx_bytes, 80)?;
+        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        // println!("mod slots {:#b} uninhibited: {}", tx_u16, msg.header());
+        Ok(msg.header())
+    }
+
+    fn uninhibit_slots(&mut self, slots: &[u8]) -> Result<CcTalkHeader, CctalkTransmissionError> {
         let mut tx_u16 = 0u16;
 
-        for val in slots {
-            tx_u16 |= 1 << val;
+        for (i, _) in slots.iter().enumerate() {
+            tx_u16 |= 1 << i;
         }
 
         let tx_array: [u8; 2] = [(tx_u16 >> 8) as u8, (tx_u16 & 0xFF) as u8];
@@ -309,9 +356,8 @@ where
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         println!("mod slots {:#b} uninhibited: {}", tx_u16, msg.header());
-        Ok(())
+        Ok(msg.header())
     }
-
     fn get_currency(&mut self) -> Result<Currancy, CctalkTransmissionError> {
         let mut currancy = Currancy::default();
         let mut country_code: [u8; 2] = [0u8; 2];
@@ -335,23 +381,22 @@ where
                 .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
             let dat = msg.data().clone();
             if *dat != [0, 0, 0, 0, 0, 0, 0] {
-                for (j, _) in country_code.clone().iter().enumerate() {
+                for (j, _) in dat.iter().enumerate() {
                     if j < 2 {
                         country_code[j] = dat[j];
-                    } else if j >= 2 || j < 6 {
+                    } else if j >= 2 && j < 6 {
                         slot_amt[j - 2] = dat[j];
                     }
                 }
 
                 let slot_str = String::from_utf8_lossy(&slot_amt[..]);
+                // println!("slot_str: {}", slot_str);
                 let slot_amt: u16 = slot_str.parse().unwrap();
-
+                println!("slot_data: {:?}, slot_amt: £{}", dat, slot_amt);
                 currancy.slots[i as usize] = slot_amt as u8;
                 if currancy.cc == [0x00, 0x00] {
                     currancy.cc = country_code;
                 }
-            } else {
-                println!("Note slot {} is unoccupied", i);
             }
         }
 

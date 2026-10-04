@@ -43,51 +43,51 @@ pub enum CctalkTransmissionError {
 
 #[derive(Debug, Clone, Error)]
 pub enum EventError {
-    #[error("Acceptance Error")]
+    #[error("MasterInhibitActive")]
     MasterInhibitActive = 0x00,
-    #[error("Acceptance Error")]
+    #[error("BillReturnedFromEscrow")]
     BillReturnedFromEscrow = 0x01,
-    #[error("Acceptance Error")]
+    #[error("InvalidBillValidation")]
     InvalidBillValidation = 0x02,
-    #[error("Acceptance Error")]
+    #[error("InvalidBillTransport")]
     InvalidBillTransport = 0x03,
-    #[error("Acceptance Error")]
+    #[error("InhibitedBillCctalk")]
     InhibitedBillCctalk = 0x04,
-    #[error("Acceptance Error")]
+    #[error("InhibitedBillDipSW")]
     InhibitedBillDipSW = 0x05,
-    #[error("Acceptance Error")]
+    #[error("BillJammedTransportUnsafe")]
     BillJammedTransportUnsafe = 0x06,
-    #[error("Acceptance Error")]
+    #[error("BillJammedStacker")]
     BillJammedStacker = 0x07,
-    #[error("Acceptance Error")]
+    #[error("BillPulledBackwards")]
     BillPulledBackwards = 0x08,
-    #[error("Acceptance Error")]
+    #[error("BillTamper")]
     BillTamper = 0x09,
-    #[error("Acceptance Error")]
+    #[error("StackerOk")]
     StackerOk = 0x0A,
-    #[error("Acceptance Error")]
+    #[error("StackerRemoved")]
     StackerRemoved = 0x0B,
-    #[error("Acceptance Error")]
+    #[error("StackerInserted")]
     StackerInserted = 0x0C,
-    #[error("Acceptance Error")]
+    #[error("StackerFaulty")]
     StackerFaulty = 0x0D,
-    #[error("Acceptance Error")]
+    #[error("StackerFull")]
     StackerFull = 0x0E,
-    #[error("Acceptance Error")]
+    #[error("StackerJammed")]
     StackerJammed = 0x0F,
-    #[error("Acceptance Error")]
+    #[error("BillJammedTransportSafe")]
     BillJammedTransportSafe = 0x10,
-    #[error("Acceptance Error")]
+    #[error("OptoFraudDetected")]
     OptoFraudDetected = 0x11,
-    #[error("Acceptance Error")]
+    #[error("StringFraudDetected")]
     StringFraudDetected = 0x12,
-    #[error("Acceptance Error")]
+    #[error("AntiStringMechFaulty")]
     AntiStringMechFaulty = 0x13,
-    #[error("Acceptance Error")]
+    #[error("BarcodeDetected")]
     BarcodeDetected = 0x14,
-    #[error("Acceptance Error")]
+    #[error("UnknownBillStacked")]
     UnknownBillStacked = 0x15,
-    #[error("Acceptance Error")]
+    #[error("UnknownError")]
     UnknownError = 0x16,
 }
 
