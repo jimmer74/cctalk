@@ -527,6 +527,8 @@ where
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
         println!("mod master inhibit: {}", msg.header());
 
+        println!("Device with addr: {} successfully initialised!\n");
+
         Ok(CctalkDevice {
             addr: self.addr,
             kind: self.kind,
