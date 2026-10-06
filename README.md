@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let delay = rpi_pal::hal::Delay;
     let mut cctalk = SharedCctalk::new(uart, delay, true);
 
-    println!("scanning addresses 8bit addresses....");
+    println!("scanning 8bit addresses....");
     let addrs = cctalk.addr_scan(ADDR_SCAN_TIMEOUT)?;
     
     //this only cares about the 1st device it detects
@@ -56,9 +56,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("probing addr: {}", addrs[0]);
         let device = CctalkDevice::new(addrs[0], &mut cctalk);
         let device = device.probe()?;
-        println!("device: {:#?}", device);
+        println!(
+            "device found: {} {} {}",
+            device.manu, device.kind, device.model
+        );
         
         let mut device = device.init()?;
+        println!(
+            "{} {} initialised! Ready for use\n",
+            device.kind, device.model
+        );
 
         let mut credits = 0_f32;
         loop {
@@ -83,17 +90,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 Terminal Output (showing acceptance of a £10 note):
 ```
-scanning addresses 8bit addresses....
+scanning 8bit addresses....
 received addresses: [40]
 probing addr: 40
-enc bytes: [1, 17, 40, 0, 0, 0, 24, 64, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 46]
-slot_data: [71, 66, 48, 48, 48, 53, 65], slot_amt: £5
-slot_data: [71, 66, 48, 48, 49, 48, 65], slot_amt: £10
-slot_data: [71, 66, 48, 48, 50, 48, 65], slot_amt: £20
-currency_sf: [100, 0, 2], currency_country: GB
-mod bill op mode: Ack
-uninhibeted all slots, result: Ack
-mod master inhibit: Ack
+device found: ITL Note Acceptor NV10
+Note Acceptor NV10 initialised! Ready for use
+
 error: InvalidBillValidation
 note_val: 10, multiplier: 100, sf: 1, dp: 100
 Accepted £10.00 note
