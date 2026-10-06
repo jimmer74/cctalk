@@ -145,12 +145,12 @@ where
             match cctalk.read_bytes_exact(20, ADDR_POL.len()) {
                 Ok(rx_bytes) => {
                     if rx_bytes != ADDR_POL {
-                        println!("echo: {:?} does not match {:?}", rx_bytes, ADDR_POL);
+                        // println!("echo: {:?} does not match {:?}", rx_bytes, ADDR_POL);
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     }
                 }
-                Err(e) => {
-                    println!("error: {}", e);
+                Err(_e) => {
+                    // println!("error: {}", e);
                     return Err(CctalkTransmissionError::CctalkSerialReadError);
                 }
             }
@@ -179,12 +179,12 @@ where
             match cctalk.read_bytes_exact(20, tx_bytes.len()) {
                 Ok(rx_msg) => {
                     if rx_msg != tx.try_to_bytes().unwrap() {
-                        println!("echo: {:?} does not match {:?}", rx_msg, tx);
+                        // println!("echo: {:?} does not match {:?}", rx_msg, tx);
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     }
                 }
-                Err(e) => {
-                    println!("error: {}", e);
+                Err(_e) => {
+                    // println!("error: {}", e);
                     return Err(CctalkTransmissionError::CctalkSerialReadError);
                 }
             }

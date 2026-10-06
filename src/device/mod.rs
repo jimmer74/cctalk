@@ -17,10 +17,10 @@ use crate::{
     interface::SharedCctalk,
     message::{Msg8, Msg16},
 };
-use heapless::Vec as hVec;
-
 use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
+use heapless::String as hString;
+use heapless::Vec as hVec;
 
 const BILL_EVENT_BUFF_LEN: usize = 11;
 const REQ_ENC_SUPPORT_BYTES: [u8; 6] = [170, 85, 0, 0, 85, 170];
@@ -29,8 +29,8 @@ const REQ_ENC_SUPPORT_BYTES: [u8; 6] = [170, 85, 0, 0, 85, 170];
 pub struct CctalkDevice<E, I, U, D> {
     pub addr: u8,
     pub kind: DevKind,
-    pub manu: String,
-    pub model: String,
+    pub manu: hString<255>,
+    pub model: hString<255>,
     currancy: Option<Currancy>,
     cctalk: SharedCctalk<U, D>,
     chksum: Chksum,
@@ -78,10 +78,10 @@ impl Currancy {
         let dp = (10_u32.pow(self.sf[2] as u32)) as f32; //divisor to get final currency in terms of major
         //units (eg pounds)
 
-        println!(
-            "note_val: {}, multiplier: {}, sf: {}, dp: {} ",
-            note_val, multiplier, sf, dp
-        );
+        // println!(
+        //     "note_val: {}, multiplier: {}, sf: {}, dp: {} ",
+        //     note_val, multiplier, sf, dp
+        // );
         (note_val * multiplier * sf) / dp
     }
 
@@ -168,12 +168,12 @@ where
             match cctalk.read_bytes_exact(timeout_ms, bytes.len()) {
                 Ok(rx_bytes) => {
                     if rx_bytes != bytes {
-                        println!("echo does not match");
+                        // println!("echo does not match");
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     }
                 }
-                Err(e) => {
-                    println!("read error: {}", e);
+                Err(_e) => {
+                    // println!("read error: {}", e);
                     return Err(CctalkTransmissionError::FailedToReciveEcho);
                 }
             }
@@ -216,7 +216,7 @@ pub enum CctalkDeviceKind {
 }
 
 impl core::fmt::Display for CctalkDeviceKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let msg = match self {
             CctalkDeviceKind::Coinmech => "Coinmech",
             CctalkDeviceKind::Hopper => "Hopper",

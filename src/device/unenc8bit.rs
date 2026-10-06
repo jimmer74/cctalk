@@ -6,7 +6,7 @@ use crate::{
 use super::{
     BILL_EVENT_BUFF_LEN, CcTalkHeader, CctalkDevice, CctalkTransmissionError, DEFAULT_TIMEOUT_MS,
     DelayNs, Init, InitStatus, MASTER_ADDR, Msg8, PhantomData, Read, UnInit, Unenc8Bit, Write,
-    hVec,
+    hString, hVec,
 };
 
 /* =====================================================================================
@@ -68,8 +68,8 @@ impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
         }
 
         if num_events > 5 {
-            let missed_events = num_events - 5;
-            println!("missed {} events", missed_events);
+            // let missed_events = num_events - 5;
+            // println!("missed {} events", missed_events);
             num_events = 5;
         }
 
@@ -80,8 +80,8 @@ impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
                 Ok(ev) => {
                     _ = events.push(ev);
                 }
-                Err(e) => {
-                    eprintln!("error: {}", e);
+                Err(_e) => {
+                    // eprintln!("error: {}", e);
                 }
             }
             self.last_event.increase();
@@ -168,20 +168,20 @@ where
          *
          * */
         self.currancy = Some(self.get_currency()?);
-        println!(
-            "currency_sf: {:?}, currency_country: {}",
-            self.currancy.unwrap().sf,
-            String::from_utf8_lossy(&self.currancy.unwrap().cc)
-        );
+        // println!(
+        //     "currency_sf: {:?}, currency_country: {}",
+        //     self.currancy.unwrap().sf,
+        //     String::from_utf8_lossy(&self.currancy.unwrap().cc)
+        // );
         /*
          *
          *      Modify Bill Operating Mode
          *
          * */
 
-        let payload: hVec<u8, 255> = if self.model == String::from("NV10") {
+        let payload: hVec<u8, 255> = if self.model == hString::<255>::try_from("NV10").unwrap() {
             hVec::from_array([0x00])
-        } else if self.model == String::from("NV9") {
+        } else if self.model == hString::<255>::try_from("NV9").unwrap() {
             hVec::from_array([0x01])
         } else {
             hVec::from_array([0x01])
@@ -197,9 +197,9 @@ where
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         let rx_bytes = self.transfer(tx_bytes, 80)?;
-        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
+        let _msg = Msg8::try_from_bytes(rx_bytes.as_slice())
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-        println!("mod bill op mode: {}", msg.header());
+        // println!("mod bill op mode: {}", msg.header());
 
         /*
          *
@@ -207,8 +207,8 @@ where
          *
          * */
 
-        let header = self.inhibit_all_slots(false)?;
-        println!("uninhibeted all slots, result: {}", header);
+        let _header = self.inhibit_all_slots(false)?;
+        // println!("uninhibited all slots, result: {}", header);
 
         /*
          *
@@ -216,8 +216,8 @@ where
          *
          * */
 
-        let ack = self.set_master_inhibit(false)?;
-        println!("mod master inhibit: {}", ack);
+        let _ack = self.set_master_inhibit(false)?;
+        // println!("mod master inhibit: {}", ack);
 
         /*
          *
@@ -229,7 +229,7 @@ where
         self.event_counter = ec.clone();
         self.last_event = ec;
 
-        // drop(cctalk);
+        // println!("Device init at addr: {} complete!\n", self.addr);
 
         Ok(CctalkDevice {
             addr: self.addr,
@@ -256,7 +256,7 @@ where
             false => 0x01,
         };
 
-        let payload: hVec<u8, 255> = hVec::from_array([inhibit]); //hVec::from_array(country_code);
+        let payload: hVec<u8, 255> = hVec::from_array([inhibit]);
         let msg = Msg8::new(
             self.addr,
             MASTER_ADDR,
@@ -344,7 +344,7 @@ where
         let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
             .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        println!("mod slots {:#b} uninhibited: {}", tx_u16, msg.header());
+        // println!("mod slots {:#b} uninhibited: {}", tx_u16, msg.header());
         Ok(msg.header())
     }
     fn get_currency(&mut self) -> Result<Currancy, CctalkTransmissionError> {
@@ -378,10 +378,12 @@ where
                     }
                 }
 
-                let slot_str = String::from_utf8_lossy(&slot_amt[..]);
+                let slot_str = unsafe {
+                    hString::<255>::from_utf8_unchecked(hVec::from_slice(&slot_amt[..]).unwrap()) //ugly!
+                };
                 // println!("slot_str: {}", slot_str);
                 let slot_amt: u16 = slot_str.parse().unwrap();
-                println!("slot_data: {:?}, slot_amt: £{}", dat, slot_amt);
+                // println!("slot_data: {:?}, slot_amt: £{}", dat, slot_amt);
                 currancy.slots[i as usize] = slot_amt as u8;
                 if currancy.cc == [0x00, 0x00] {
                     currancy.cc = country_code;
@@ -420,7 +422,7 @@ where
          *      Request Currency Revision
          *
          * */
-        let payload: hVec<u8, 255> = hVec::new(); //hVec::from_array(country_code);
+        let payload: hVec<u8, 255> = hVec::new();
         let msg = Msg8::new(
             self.addr,
             MASTER_ADDR,
@@ -441,8 +443,8 @@ where
                     }
                 }
             }
-            Err(e) => {
-                println!("error curr revision: {}", e)
+            Err(_e) => {
+                // println!("error curr revision: {}", e)
             }
         }
 

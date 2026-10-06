@@ -1,3 +1,5 @@
+#![no_std]
+
 pub mod device;
 pub mod errors;
 pub mod headers;

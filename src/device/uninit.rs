@@ -48,11 +48,11 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
 
         //Manufacturer
         res = self.header_only(self.addr, RequestManufacturerId, None)?;
-        let manu = String::from_utf8(res.data().to_vec()).unwrap();
+        let manu = hString::<255>::from_utf8(res.data().clone()).unwrap();
 
         //Model
         res = self.header_only(self.addr, CcTalkHeader::RequestProductCode, None)?;
-        let model = String::from_utf8(res.data().to_vec()).unwrap();
+        let model = hString::<255>::from_utf8(res.data().clone()).unwrap();
 
         Ok(CctalkDevice {
             addr: addr,
@@ -121,11 +121,11 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
 
         //Manufacturer
         res = self.header_only(addr, RequestManufacturerId, None)?;
-        let manu = String::from_utf8(res.data().to_vec()).unwrap();
+        let manu = hString::<255>::from_utf8(res.data().clone()).unwrap();
 
         //Model
         res = self.header_only(addr, CcTalkHeader::RequestProductCode, None)?;
-        let model = String::from_utf8(res.data().to_vec()).unwrap();
+        let model = hString::<255>::from_utf8(res.data().clone()).unwrap();
 
         Ok(CctalkDevice {
             addr: addr,
@@ -165,8 +165,10 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
 
         match self.transfer(tx_bytes, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)) {
             Ok(rx_bytes) => {
-                println!("enc bytes: {:?}", rx_bytes);
-                if rx_bytes.len() > 0 {
+                // println!("enc bytes: {:?}", rx_bytes);
+                if rx_bytes.len() == 17 {
+                    //packet layout consists of 17 bytes (see struct below for
+                    //layout )
                     match Msg8::try_from_bytes(rx_bytes.as_slice()) {
                         Ok(msg) => {
                             let data = msg.data().as_slice();
@@ -191,7 +193,7 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
                 }
             }
             Err(e) => {
-                println!("enc bytes error: {}", e);
+                // println!("enc bytes error: {}", e);
                 Err(e)
             }
         }

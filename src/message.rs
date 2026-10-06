@@ -1,7 +1,8 @@
 use super::errors::CctalkMessageError;
 use super::headers::CcTalkHeader;
+use heapless::String as hString;
 use heapless::Vec as hVec;
-
+use heapless::format;
 pub type Msg8 = CctalkMessage<Cctalk8BitChksumMessage>;
 pub type Msg16 = CctalkMessage<CctalkCRC16ChksumMessage>;
 // type TryFromBytesFn = fn(data: &[u8]) -> Result<CctalkMessage<CctalkCRC16ChksumMessage>, CctalkMessageError>;
@@ -76,12 +77,12 @@ impl CctalkMessage<CctalkCRC16ChksumMessage> {
         }
 
         if data[1] as usize + 5 != packet_len {
-            println!(
-                "actual packet len: {}, calculated packet len: {}, \npacket: {:02X?}",
-                packet_len,
-                data[1] + 5,
-                &data[..]
-            );
+            // println!(
+            //     "actual packet len: {}, calculated packet len: {}, \npacket: {:02X?}",
+            //     packet_len,
+            //     data[1] + 5,
+            //     &data[..]
+            // );
             return Err(CctalkMessageError::IncorrectDataLen(
                 data[1] + 5,
                 packet_len as u8,
@@ -173,12 +174,12 @@ impl CctalkMessage<Cctalk8BitChksumMessage> {
         }
 
         if data[1] as usize + 5 != packet_len {
-            println!(
-                "actual packet len: {}, calculated packet len: {}, \npacket: {:02X?}",
-                packet_len,
-                data[1] + 5,
-                &data[..]
-            );
+            // println!(
+            //     "actual packet len: {}, calculated packet len: {}, \npacket: {:02X?}",
+            //     packet_len,
+            //     data[1] + 5,
+            //     &data[..]
+            // );
             return Err(CctalkMessageError::IncorrectDataLen(
                 data[1] + 5,
                 packet_len as u8,
@@ -249,11 +250,11 @@ where
         &self.value
     }
 
-    pub fn data_str(&self) -> String
+    pub fn data_str(&self) -> hString<255>
     where
         M: MessageType,
     {
-        String::from_utf8(self.value.data().to_vec()).unwrap()
+        hString::from_utf8(self.value.data().clone()).unwrap()
     }
 
     pub fn len_valid(self: &Self) -> Result<u8, CctalkMessageError> {
@@ -376,8 +377,8 @@ impl From<CctalkCRC16ChksumMessage> for Cctalk8BitChksumMessage {
 }
 
 impl CctalkCRC16ChksumMessage {
-    pub fn data_str(&self) -> String {
-        String::from_utf8(self.data.to_vec()).unwrap()
+    pub fn data_str(&self) -> hString<255> {
+        hString::from_utf8(self.data.clone()).unwrap()
     }
 
     fn calc_chksum(&self) -> u16 {
@@ -407,8 +408,8 @@ impl CctalkCRC16ChksumMessage {
 }
 
 impl core::fmt::Display for Cctalk8BitChksumMessage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let msg = format!(
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let msg: hString<255> = format!(
             "From: {}\nData Len: {}\nTo: {}\nHeader: {}\nData: {:?}\nChksum: {:?} ",
             self.src,
             self.len,
@@ -416,8 +417,9 @@ impl core::fmt::Display for Cctalk8BitChksumMessage {
             CcTalkHeader::try_from(self.header).unwrap(),
             self.data.to_vec(),
             self.chksum
-        );
-        write!(f, "{}", msg)
+        )
+        .unwrap();
+        write!(f, "{}", msg.as_view())
     }
 }
 impl Cctalk8BitChksumMessage {
