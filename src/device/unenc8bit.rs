@@ -1,5 +1,5 @@
 use crate::{
-    device::{Currancy, EC, counter::EventCounter},
+    device::{Currancy, counter::EC},
     errors::EventError,
 };
 
@@ -41,7 +41,11 @@ impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
         D: DelayNs,
         U: Read + Write,
     {
-        let res = self.header_only(self.addr, CcTalkHeader::ReadBufferedBillEvents, timeout_ms)?;
+        let res = self.header_only(
+            self.info.addr,
+            CcTalkHeader::ReadBufferedBillEvents,
+            timeout_ms,
+        )?;
         let header = res.header();
         if header != CcTalkHeader::Ack {
             return Err(CctalkTransmissionError::CctalkFailedToAck(header));
@@ -57,19 +61,18 @@ impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
     fn process_events(&mut self, data: [u8; BILL_EVENT_BUFF_LEN]) -> hVec<EventResult, 5> {
         let mut events = hVec::new();
 
-        self.last_event.set(self.event_counter.get());
+        self.events.last.set(self.events.curr.get());
 
-        self.event_counter.set(data[0]);
+        self.events.curr.set(data[0]);
 
-        let mut num_events = self.event_counter.diff(&self.last_event);
+        let mut num_events = self.events.curr.diff(&self.events.last);
 
         if num_events == 0 {
             return hVec::new();
         }
 
         if num_events > 5 {
-            // let missed_events = num_events - 5;
-            // println!("missed {} events", missed_events);
+            // println!("missed {} events", num_events - 5);
             num_events = 5;
         }
 
@@ -80,11 +83,9 @@ impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
                 Ok(ev) => {
                     _ = events.push(ev);
                 }
-                Err(_e) => {
-                    // eprintln!("error: {}", e);
-                }
+                Err(_e) => (),
             }
-            self.last_event.increase();
+            self.events.last.increase();
         }
 
         events
@@ -173,21 +174,23 @@ where
         //     self.currancy.unwrap().sf,
         //     String::from_utf8_lossy(&self.currancy.unwrap().cc)
         // );
+
         /*
          *
          *      Modify Bill Operating Mode
          *
          * */
 
-        let payload: hVec<u8, 255> = if self.model == hString::<255>::try_from("NV10").unwrap() {
+        let payload: hVec<u8, 255> = if self.info.model == hString::<255>::try_from("NV10").unwrap()
+        {
             hVec::from_array([0x00])
-        } else if self.model == hString::<255>::try_from("NV9").unwrap() {
+        } else if self.info.model == hString::<255>::try_from("NV9").unwrap() {
             hVec::from_array([0x01])
         } else {
             hVec::from_array([0x01])
         };
         let msg = Msg8::new(
-            self.addr,
+            self.info.addr,
             MASTER_ADDR,
             CcTalkHeader::ModifyBillOperatingMode,
             payload,
@@ -226,22 +229,18 @@ where
          */
 
         let ec = self.get_event_counter()?;
-        self.event_counter = ec.clone();
-        self.last_event = ec;
+        self.events.curr = ec;
+        self.events.last = self.events.curr.clone();
 
-        // println!("Device init at addr: {} complete!\n", self.addr);
+        // println!("Device init at addr: {} complete!\n", self.info.addr);
 
         Ok(CctalkDevice {
-            addr: self.addr,
-            kind: self.kind,
-            manu: self.manu,
-            model: self.model,
+            info: self.info,
             currancy: self.currancy,
             cctalk: self.cctalk,
             chksum: self.chksum,
             encrypted: self.encrypted,
-            event_counter: self.event_counter,
-            last_event: self.last_event,
+            events: self.events,
             _enc_state: PhantomData,
             _init_state: PhantomData,
         })
@@ -258,7 +257,7 @@ where
 
         let payload: hVec<u8, 255> = hVec::from_array([inhibit]);
         let msg = Msg8::new(
-            self.addr,
+            self.info.addr,
             MASTER_ADDR,
             CcTalkHeader::ModifyMasterInhibitStatus,
             payload,
@@ -277,7 +276,7 @@ where
     fn get_event_counter(&mut self) -> Result<EC, CctalkTransmissionError> {
         let payload = hVec::new();
         let msg = Msg8::new(
-            self.addr,
+            self.info.addr,
             MASTER_ADDR,
             CcTalkHeader::ReadBufferedBillEvents,
             payload,
@@ -293,7 +292,7 @@ where
 
         let ev_cnt = data_bytes[0];
 
-        Ok(EventCounter::new(ev_cnt))
+        Ok(EC::new(ev_cnt))
     }
 
     fn inhibit_all_slots(&mut self, value: bool) -> Result<CcTalkHeader, CctalkTransmissionError> {
@@ -301,7 +300,7 @@ where
 
         let payload: hVec<u8, 255> = hVec::from_array(tx_array);
         let msg = Msg8::new(
-            self.addr,
+            self.info.addr,
             MASTER_ADDR,
             CcTalkHeader::ModifyInhibitStatus,
             payload,
@@ -330,7 +329,7 @@ where
 
         let payload: hVec<u8, 255> = hVec::from_array(tx_array);
         let msg = Msg8::new(
-            self.addr,
+            self.info.addr,
             MASTER_ADDR,
             CcTalkHeader::ModifyInhibitStatus,
             payload,
@@ -360,7 +359,12 @@ where
         for i in 1..=16 {
             let mut payload: hVec<u8, 255> = hVec::new();
             _ = payload.push(i);
-            let msg = Msg8::new(self.addr, MASTER_ADDR, CcTalkHeader::RequestBillId, payload);
+            let msg = Msg8::new(
+                self.info.addr,
+                MASTER_ADDR,
+                CcTalkHeader::RequestBillId,
+                payload,
+            );
             let tx_bytes = msg
                 .try_to_bytes()
                 .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
@@ -399,7 +403,7 @@ where
 
         let payload: hVec<u8, 255> = hVec::from_array(country_code);
         let msg = Msg8::new(
-            self.addr,
+            self.info.addr,
             MASTER_ADDR,
             CcTalkHeader::RequestCountryScalingFactor,
             payload,
@@ -424,7 +428,7 @@ where
          * */
         let payload: hVec<u8, 255> = hVec::new();
         let msg = Msg8::new(
-            self.addr,
+            self.info.addr,
             MASTER_ADDR,
             CcTalkHeader::RequestCurrencyRevision,
             payload,

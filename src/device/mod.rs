@@ -7,11 +7,10 @@ pub mod uninit;
 
 type EncKey = CctalkEncKey;
 type Chksum = CctalkDeviceCRC;
-type EC = EventCounter;
 type DevKind = CctalkDeviceKind;
 use crate::{
     DEFAULT_TIMEOUT_MS, MASTER_ADDR,
-    device::counter::EventCounter,
+    device::counter::ECs,
     errors::CctalkTransmissionError,
     headers::CcTalkHeader::{self, RequestEquipmentCategory, RequestManufacturerId, SimplePoll},
     interface::SharedCctalk,
@@ -25,30 +24,26 @@ use heapless::Vec as hVec;
 const BILL_EVENT_BUFF_LEN: usize = 11;
 const REQ_ENC_SUPPORT_BYTES: [u8; 6] = [170, 85, 0, 0, 85, 170];
 
-#[derive(Debug)]
-pub struct CctalkDevice<E, I, U, D> {
+#[derive(Debug, Default, Clone)]
+pub struct DevInfo {
     pub addr: u8,
     pub kind: DevKind,
     pub manu: hString<255>,
     pub model: hString<255>,
-    currancy: Option<Currancy>,
+}
+
+#[derive(Debug)]
+pub struct CctalkDevice<E, I, U, D> {
+    pub info: DevInfo,
     cctalk: SharedCctalk<U, D>,
+    currancy: Option<Currancy>,
     chksum: Chksum,
     encrypted: EncKey,
-    event_counter: EC,
-    last_event: EC,
+    events: ECs,
+
     _enc_state: PhantomData<E>,
     _init_state: PhantomData<I>,
 }
-
-//TODO:
-// #[derive(Debug, Clone, Default)]
-// struct Dev {
-// kind: DevKind,
-// manufacturer: CctalkManu,
-// model: String
-//
-// }
 
 #[derive(Debug, Clone, Copy)]
 struct Currancy {
@@ -90,7 +85,7 @@ impl Currancy {
     }
 
     fn num_slots(&self) -> usize {
-        let num_slots = self.slots.iter().filter(|f| *f != &0u8).count();
+        let num_slots = self.slots.iter().filter(|slot| *slot != &0u8).count();
         num_slots
     }
 }

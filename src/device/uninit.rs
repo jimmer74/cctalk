@@ -7,18 +7,17 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         D: DelayNs,
     {
         Self {
-            addr,
+            info: DevInfo {
+                addr,
+                ..Default::default()
+            },
             cctalk: cctalk,
             _enc_state: PhantomData,
             _init_state: PhantomData,
-            kind: Default::default(),
-            manu: Default::default(),
-            model: Default::default(),
             currancy: None,
             chksum: Default::default(),
             encrypted: Default::default(),
-            event_counter: Default::default(),
-            last_event: Default::default(),
+            events: ECs::default(),
         }
     }
 
@@ -27,12 +26,12 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         D: DelayNs,
         U: Read + Write,
     {
-        let addr = self.addr;
-        let mut res = self.header_only(self.addr, CcTalkHeader::SimplePoll, None)?;
+        let addr = self.info.addr;
+        let mut res = self.header_only(self.info.addr, CcTalkHeader::SimplePoll, None)?;
         _ = res;
 
         //Device type
-        res = self.header_only(self.addr, CcTalkHeader::RequestEquipmentCategory, None)?;
+        res = self.header_only(self.info.addr, CcTalkHeader::RequestEquipmentCategory, None)?;
 
         let kind = CctalkDeviceKind::from(res.data().as_slice());
 
@@ -41,28 +40,31 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         }
 
         //Encryption Key/Status
-        let encrypted = match self.retrieve_enc_key(self.addr, Some(200)) {
+        let encrypted = match self.retrieve_enc_key(self.info.addr, Some(200)) {
             Ok(val) => val,
             Err(_e) => EncKey::CctalkUnEncrypted,
         };
 
         //Manufacturer
-        res = self.header_only(self.addr, RequestManufacturerId, None)?;
+        res = self.header_only(self.info.addr, RequestManufacturerId, None)?;
         let manu = hString::<255>::from_utf8(res.data().clone()).unwrap();
 
         //Model
-        res = self.header_only(self.addr, CcTalkHeader::RequestProductCode, None)?;
+        res = self.header_only(self.info.addr, CcTalkHeader::RequestProductCode, None)?;
         let model = hString::<255>::from_utf8(res.data().clone()).unwrap();
 
+        let info = DevInfo {
+            addr,
+            kind,
+            manu,
+            model,
+        };
+
         Ok(CctalkDevice {
-            addr: addr,
-            kind: kind,
-            manu: manu,
-            model: model,
+            info,
             currancy: self.currancy,
             cctalk: self.cctalk,
-            event_counter: EventCounter::default(),
-            last_event: EventCounter::default(),
+            events: ECs::default(),
             chksum: CctalkDeviceCRC::Simple8bit,
             encrypted: encrypted,
             _enc_state: PhantomData,
@@ -103,7 +105,7 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         D: DelayNs,
         U: Read + Write,
     {
-        let addr = self.addr;
+        let addr = self.info.addr;
         #[allow(unused_assignments)]
         let mut res = self.header_only(addr, SimplePoll, None)?;
 
@@ -127,19 +129,23 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         res = self.header_only(addr, CcTalkHeader::RequestProductCode, None)?;
         let model = hString::<255>::from_utf8(res.data().clone()).unwrap();
 
+        let info = DevInfo {
+            addr,
+            kind,
+            manu,
+            model,
+        };
+
         Ok(CctalkDevice {
-            addr: addr,
-            kind: kind,
-            manu: manu,
-            model: model,
+            info,
+
             cctalk: self.cctalk,
             currancy: self.currancy,
             chksum: CctalkDeviceCRC::Simple8bit,
             encrypted: encrypted,
             _enc_state: PhantomData,
             _init_state: PhantomData,
-            event_counter: EventCounter::default(),
-            last_event: EventCounter::default(),
+            events: ECs::default(),
         })
     }
 

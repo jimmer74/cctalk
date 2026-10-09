@@ -2,7 +2,6 @@ extern crate alloc;
 extern crate spin;
 use alloc::sync::Arc;
 use spin::{Mutex, MutexGuard};
-// use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::headers::CcTalkHeader;
 use crate::{errors::CctalkTransmissionError, message::Msg16};

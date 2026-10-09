@@ -1,7 +1,15 @@
 use core::ops::Deref;
+pub type EC = EventCounter;
+pub type ECs = Events;
 
 #[derive(Default, Debug, Clone)]
 pub struct EventCounter(u8);
+
+#[derive(Default, Debug, Clone)]
+pub struct Events {
+    pub curr: EC,
+    pub last: EC,
+}
 
 #[allow(unused)]
 impl EventCounter {
