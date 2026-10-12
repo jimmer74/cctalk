@@ -10,7 +10,7 @@ use embedded_hal_nb::serial::{Read, Write};
 use heapless::Vec as hVec;
 use nb::block;
 
-const ADDR_POL: [u8; 5] = [000, 000, 001, CcTalkHeader::AddressPoll as u8, 002];
+const ADDR_POL: [u8; 5] = [0x00, 0x00, 0x01, CcTalkHeader::AddressPoll as u8, 0x02];
 
 #[derive(Debug, Clone, Default, PartialEq, PartialOrd)]
 pub struct Cctalk<U, D> {
@@ -39,6 +39,7 @@ where
         loop {
             match self.uart.read() {
                 Ok(byte) => {
+                    elapsed_ms = 0_u32; //reset timeout after each successful read
                     let _ = rx_buf.push(byte);
                     n = n + 1;
 
@@ -75,6 +76,7 @@ where
         loop {
             match self.uart.read() {
                 Ok(byte) => {
+                    elapsed_ms = 0_u32; //reset timeout after successful read;
                     let _ = rx_buf.push(byte);
 
                     if rx_buf.len() == num_bytes {
