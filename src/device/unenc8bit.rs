@@ -17,100 +17,35 @@ use super::{
  *
  * =====================================================================================
  * */
-impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
-    // CcTalkHeader::ReadBufferedBillEvents returns a history of bill events:
-    //
-    // Received 11-byte data-packet (from Cctalk spec part 2):
-    //
-    // [ event counter ]
-    // [ result 1A ] [ result 1B ]
-    // [ result 2A ] [ result 2B ]
-    // [ result 3A ] [ result 3B ]
-    // [ result 4A ] [ result 4B ]
-    // [ result 5A ] [ result 5B ]
-    //
-    // Can only extract last 5 events, so frequent polling is required so that more
-    // than 5 events haven't occured since last poll.
-    // '
+impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D>
+where
+    D: DelayNs,
+    U: Read + Write,
+{
+    /*===================================================================================
+     *
+     *
+     *
+     *                                  public methods
+     *
+     *
+     *
+     *===================================================================================
+     * */
 
-    fn read_buff_events(
-        &mut self,
-        timeout_ms: Option<u32>,
-    ) -> Result<[u8; BILL_EVENT_BUFF_LEN], CctalkTransmissionError>
-    where
-        D: DelayNs,
-        U: Read + Write,
-    {
-        let res = self.header_only(
-            self.info.addr,
-            CcTalkHeader::ReadBufferedBillEvents,
-            timeout_ms,
-        )?;
-        let header = res.header();
-        if header != CcTalkHeader::Ack {
-            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
-        };
+    pub fn get_int_events(&mut self) -> Result<hVec<IntEvent, 5>, CctalkTransmissionError> {
+        let mut out_events: hVec<IntEvent, 5> = hVec::new();
 
-        let dat = res.data()[0..BILL_EVENT_BUFF_LEN]
-            .try_into()
-            .expect("error buff events ret value not 11 bytes long");
+        let in_events = self.read_events(Some(20))?;
 
-        Ok(dat)
-    }
-
-    fn process_events(&mut self, data: [u8; BILL_EVENT_BUFF_LEN]) -> hVec<EventResult, 5> {
-        let mut events = hVec::new();
-
-        self.events.last.set(self.events.curr.get());
-
-        self.events.curr.set(data[0]);
-
-        let mut num_events = self.events.curr.diff(&self.events.last);
-
-        if num_events == 0 {
-            return hVec::new();
+        for event in in_events {
+            _ = out_events.push(IntEvent::from(event))
         }
 
-        if num_events > 5 {
-            // println!("missed {} events", num_events - 5);
-            num_events = 5;
-        }
-
-        for i in 0..num_events as usize {
-            let a = data[i + 1];
-            let b = data[i + 2];
-            match EventResult::new(a, b) {
-                Ok(ev) => {
-                    _ = events.push(ev);
-                }
-                Err(_e) => (),
-            }
-            self.events.last.increase();
-        }
-
-        events
+        Ok(out_events)
     }
 
-    pub fn read_events(
-        &mut self,
-        timeout_ms: Option<u32>,
-    ) -> Result<hVec<EventResult, 5>, CctalkTransmissionError>
-    where
-        D: DelayNs,
-        U: Read + Write,
-    {
-        let event_buf = self.read_buff_events(timeout_ms)?;
-
-        let events = self.process_events(event_buf);
-
-        Ok(events)
-    }
-
-    pub fn get_buffered_credits(&mut self) -> Result<hVec<f32, 5>, CctalkTransmissionError>
-    where
-        D: DelayNs,
-        U: Read + Write,
-    {
+    pub fn get_buffered_credits(&mut self) -> Result<hVec<f32, 5>, CctalkTransmissionError> {
         let mut credits: hVec<f32, 5> = hVec::new();
 
         let events = self.read_events(Some(20))?;
@@ -121,22 +56,194 @@ impl<U, D> CctalkDevice<Unenc8Bit, Init, U, D> {
 
         Ok(credits)
     }
+
+    pub fn action_escrow(&mut self, accept: bool) -> Result<(), CctalkTransmissionError> {
+        let mut cmd_byte = 0x00;
+
+        if accept {
+            cmd_byte |= 0x01;
+        }
+
+        let msg = Msg8::new(
+            self.info.addr,
+            MASTER_ADDR,
+            CcTalkHeader::RouteBill,
+            hVec::from_array([cmd_byte]),
+        );
+        let res = self.transfer(msg.try_to_bytes().unwrap(), 20)?;
+        let res = Msg8::try_from_bytes(&res)
+            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let header = res.header();
+        if header != CcTalkHeader::Ack {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+        };
+
+        Ok(())
+    }
+
+    /*==============================================================================
+     *
+     *
+     *
+     *                          private helper fn's
+     *
+     *
+     *
+     *==============================================================================
+     * */
+    fn read_buff_events(
+        &mut self,
+        timeout_ms: Option<u32>,
+    ) -> Result<[u8; BILL_EVENT_BUFF_LEN], CctalkTransmissionError> {
+        // CcTalkHeader::ReadBufferedBillEvents returns a history of bill events:
+        //
+        // Received 11-byte data-packet (from Cctalk spec part 2):
+        //
+        // [ event counter ]
+        // [ result 1A ] [ result 1B ]
+        // [ result 2A ] [ result 2B ]
+        // [ result 3A ] [ result 3B ]
+        // [ result 4A ] [ result 4B ]
+        // [ result 5A ] [ result 5B ]
+        //
+        // Can only extract last 5 events, so frequent polling is required so that more
+        // than 5 events haven't occured since last poll.
+        //
+
+        //get response to event poll - if not an ack, return an error
+        let res = self.header_only(
+            self.info.addr,
+            CcTalkHeader::ReadBufferedBillEvents,
+            timeout_ms,
+        )?;
+        let header = res.header();
+        if header != CcTalkHeader::Ack {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+        };
+
+        //extract the 11-byte data-packet from response and return
+        let dat = res.data()[0..BILL_EVENT_BUFF_LEN]
+            .try_into()
+            .expect("error buff events ret value not 11 bytes long");
+
+        Ok(dat)
+    }
+
+    fn process_events(&mut self, data: [u8; BILL_EVENT_BUFF_LEN]) -> hVec<RawResult, 5> {
+        let mut events = hVec::new();
+
+        //store old events counter
+        self.events.last.set(self.events.curr.get());
+
+        //1st byte of packet is new event counter
+        self.events.curr.set(data[0]);
+
+        //diff between old and new is number of events we need from queue
+        let mut num_events = self.events.curr.diff(&self.events.last);
+
+        //if no events have occured since last poll, return an empty list
+        if num_events == 0 {
+            return hVec::new();
+        }
+
+        //if more than 5 events have occured since last poll, we have lost
+        //some events and the maximum number we can extract from queue is 5,
+        if num_events > 5 {
+            // println!("missed {} events", num_events - 5);
+            num_events = 5;
+        }
+
+        //iterate over the events in queue and extract and store the a and b data for each one
+        for i in 0..num_events as usize {
+            let a = data[i + 1];
+            let b = data[i + 2];
+            _ = events.push(RawResult { a, b });
+
+            //we have one less event to process so increase last event counter
+            self.events.last.increase();
+        }
+
+        events
+    }
+
+    fn read_events(
+        &mut self,
+        timeout_ms: Option<u32>,
+    ) -> Result<hVec<RawResult, 5>, CctalkTransmissionError>
+    where
+        D: DelayNs,
+        U: Read + Write,
+    {
+        //get the 11-byte event buffer
+        let event_buf = self.read_buff_events(timeout_ms)?;
+
+        //convert the 11-byte buffer into a len-5 (a,b) event queue
+        let events = self.process_events(event_buf);
+
+        Ok(events)
+    }
+}
+
+#[derive(Debug)]
+pub enum IntEvent {
+    StackedNote(u8),
+    NoteEscrow(u8),
+    Barcode,
+    BarcodeEscrow,
+    DevError(EventError),
+}
+
+impl Default for IntEvent {
+    fn default() -> Self {
+        Self::DevError(EventError::UnknownError)
+    }
+}
+
+/*
+ *
+ * Slightly complicated schema:
+ *
+ *
+ * (a,b) => (0,20) Barcode Detected
+ * (a,b) => (255, 1) Ticket held in escrow
+ * (a,b) (1..=254, 0) Note Accepted (a is note slot number (need to look up in currency table))
+ * (a,b) => (1..=254, 1) Note held in Escrow
+ * (a,b) => (0, 1..=21) Error Codes Various
+ *
+ *
+ * */
+
+impl From<RawResult> for IntEvent {
+    fn from(value: RawResult) -> Self {
+        let a = value.a;
+        let b = value.b;
+
+        match (a, b) {
+            //note slot 1->254, error slot: Escrow Hold
+            (1..255, 1) => Self::NoteEscrow(a),
+            //note slot 1->254, error slot: Note stacked/Accepted
+            (1..255, 0) => Self::StackedNote(a),
+            //barcode/ticket slot 255, error slot: Ticket stacked/Accepted
+            (255, 0) => Self::Barcode,
+            //barcodde/ticket slot: 255, error slot: Escrow Hold
+            (255, 1) => Self::BarcodeEscrow,
+            //anything else (a must be zero and b must be an error code)
+            (_, _) => Self::DevError(EventError::from(b)),
+        }
+    }
 }
 
 #[derive(Default, Debug)]
-pub struct EventResult {
+struct RawResult {
     #[allow(unused)]
     a: u8,
     b: u8,
 }
 
-impl EventResult {
-    fn new(a: u8, b: u8) -> Result<Self, EventError> {
-        if a == 0 {
-            return Err(EventError::from(b));
-        } else {
-            Ok(Self { a, b })
-        }
+impl RawResult {
+    #[allow(unused)]
+    fn new(a: u8, b: u8) -> Self {
+        Self { a, b }
     }
 
     #[allow(unused)]
@@ -158,11 +265,10 @@ where
     U: Read + Write,
     D: DelayNs,
 {
-    pub fn init(mut self) -> Result<CctalkDevice<Unenc8Bit, Init, U, D>, CctalkTransmissionError>
-    where
-        D: DelayNs,
-        U: Read + Write,
-    {
+    pub fn init(
+        mut self,
+        escrow: bool,
+    ) -> Result<CctalkDevice<Unenc8Bit, Init, U, D>, CctalkTransmissionError> {
         /*
          *
          *      Get currency
@@ -181,19 +287,20 @@ where
          *
          * */
 
-        let payload: hVec<u8, 255> = if self.info.model == hString::<255>::try_from("NV10").unwrap()
-        {
-            hVec::from_array([0x00])
-        } else if self.info.model == hString::<255>::try_from("NV9").unwrap() {
-            hVec::from_array([0x01])
-        } else {
-            hVec::from_array([0x01])
-        };
+        let mut cmd_byte = 0x00;
+
+        if self.info.model == hString::<255>::try_from("NV9").unwrap() {
+            cmd_byte |= 0b00000001;
+        }
+        if escrow {
+            cmd_byte |= 1 << 1;
+        }
+
         let msg = Msg8::new(
             self.info.addr,
             MASTER_ADDR,
             CcTalkHeader::ModifyBillOperatingMode,
-            payload,
+            hVec::from_array([cmd_byte]),
         );
         let tx_bytes = msg
             .try_to_bytes()
@@ -475,10 +582,7 @@ where
         addr: u8,
         header: CcTalkHeader,
         timeout_ms: Option<u32>,
-    ) -> Result<Msg8, CctalkTransmissionError>
-    where
-        I: InitStatus,
-    {
+    ) -> Result<Msg8, CctalkTransmissionError> {
         let msg = Msg8::new(addr, MASTER_ADDR, header, hVec::new());
         let tx_bytes = msg
             .try_to_bytes()
