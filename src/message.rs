@@ -5,7 +5,6 @@ use heapless::Vec as hVec;
 use heapless::format;
 pub type Msg8 = CctalkMessage<Cctalk8BitChksumMessage>;
 pub type Msg16 = CctalkMessage<CctalkCRC16ChksumMessage>;
-// type TryFromBytesFn = fn(data: &[u8]) -> Result<CctalkMessage<CctalkCRC16ChksumMessage>, CctalkMessageError>;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct CctalkMessage<T> {
@@ -19,6 +18,75 @@ pub struct CctalkMessage<T> {
  *
  *
  *==================================================================== */
+impl Into<hVec<u8, 260>> for Msg16 {
+    fn into(self) -> hVec<u8, 260> {
+        let mut tx_buf = hVec::new();
+
+        _ = tx_buf.push(self.value.dest);
+        _ = tx_buf.push(self.value.len);
+        _ = tx_buf.push(self.value.chksum_lsb);
+        _ = tx_buf.push(self.value.header);
+        for dat in self.value.data.iter() {
+            _ = tx_buf.push(*dat);
+        }
+        _ = tx_buf.push(self.value.chksum_msb);
+
+        tx_buf
+    }
+}
+
+impl TryFrom<hVec<u8, 260>> for Msg16 {
+    type Error = CctalkMessageError;
+
+    fn try_from(value: hVec<u8, 260>) -> Result<Self, Self::Error> {
+        //is packet too short (cctalk packets are 5 bytes minimum)
+        let packet_len = value.len();
+
+        if packet_len <= 4 {
+            return Err(CctalkMessageError::MessageTooShort(packet_len));
+        }
+
+        if value[1] as usize + 5 != packet_len {
+            return Err(CctalkMessageError::IncorrectDataLen(
+                value[1] + 5,
+                packet_len as u8,
+            ));
+        }
+
+        let res = CctalkCRC16ChksumMessage {
+            chksum_lsb: value[2],
+            dest: value[0],
+            header: value[3],
+            data: if packet_len > 5 {
+                let mut tmp: hVec<u8, 255> = hVec::new();
+                for n in 4..packet_len - 1 {
+                    _ = tmp
+                        .push(value[n as usize])
+                        .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+                }
+                tmp
+            } else {
+                hVec::new()
+            },
+            len: value[1],
+            chksum_msb: value[packet_len as usize - 1],
+        };
+
+        // is chksum correct?
+        let calc_chksum = res.calc_chksum();
+        let act_chksum: u16 = ((res.chksum_msb as u16) << 8) | res.chksum_lsb as u16;
+
+        if calc_chksum != act_chksum {
+            return Err(CctalkMessageError::IncorrectChksum16(
+                act_chksum,
+                calc_chksum,
+            ));
+        }
+
+        Ok(CctalkMessage { value: res })
+    }
+}
+
 impl CctalkMessage<CctalkCRC16ChksumMessage> {
     //length and chksum are calced from supplied data (source, dest, header, data).
     //if everything else is correct, then message will be correct
@@ -38,77 +106,6 @@ impl CctalkMessage<CctalkCRC16ChksumMessage> {
         msg.chksum_msb = chksum[1];
 
         Self { value: msg }
-    }
-
-    pub fn try_to_bytes(&self) -> Result<hVec<u8, 260>, CctalkMessageError> {
-        let mut tx_buf = hVec::new();
-
-        _ = tx_buf
-            .push(self.value.dest)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        _ = tx_buf
-            .push(self.value.len)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        _ = tx_buf
-            .push(self.value.chksum_lsb)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        _ = tx_buf
-            .push(self.value.header)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        for dat in self.value.data.iter() {
-            _ = tx_buf
-                .push(*dat)
-                .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        }
-        _ = tx_buf
-            .push(self.value.chksum_msb)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-
-        Ok(tx_buf)
-    }
-
-    pub fn try_from_bytes(
-        data: &[u8],
-    ) -> Result<CctalkMessage<CctalkCRC16ChksumMessage>, CctalkMessageError> {
-        let packet_len = data.len();
-
-        if packet_len <= 4 {
-            return Err(CctalkMessageError::MessageTooShort(packet_len));
-        }
-
-        if data[1] as usize + 5 != packet_len {
-            // println!(
-            //     "actual packet len: {}, calculated packet len: {}, \npacket: {:02X?}",
-            //     packet_len,
-            //     data[1] + 5,
-            //     &data[..]
-            // );
-            return Err(CctalkMessageError::IncorrectDataLen(
-                data[1] + 5,
-                packet_len as u8,
-            ));
-        }
-
-        let rx = CctalkCRC16ChksumMessage {
-            chksum_lsb: data[2],
-            dest: data[0],
-            header: data[3],
-            data: if packet_len > 5 {
-                let mut tmp: hVec<u8, 255> = hVec::new();
-                for n in 4..packet_len - 1 {
-                    _ = tmp
-                        .push(data[n as usize])
-                        .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-                }
-                tmp
-            } else {
-                hVec::new()
-            },
-            len: data[1],
-            chksum_msb: data[packet_len as usize - 1],
-        };
-
-        Ok(CctalkMessage { value: rx })
     }
 }
 /*======================================================================
@@ -528,18 +525,16 @@ mod tests {
     }
 
     #[test]
-    fn test_to_bytes() {
+    fn test_msg8_to_bytes() {
         let testcase = CctalkMessage::<Cctalk8BitChksumMessage>::new(
             0x02,
             0x01,
             CcTalkHeader::UploadCalibrationData,
             hVec::from_array([0x34, 0xFF, 0x98, 0x13]),
         );
-
+        let bytes: hVec<u8, 260> = testcase.into();
         assert_eq!(
-            testcase
-                .try_to_bytes()
-                .expect("error couldn't convert test msg to bytes - fix the test!'"),
+            bytes,
             hVec::<u8, 255>::from_array([
                 0x02,                                      //dest
                 0x04,                                      //data len - 4 bytes
@@ -555,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_bytes() {
+    fn test_msg8_from_bytes() {
         /*============================
          * TEST #1 - good transaction
          *============================ */

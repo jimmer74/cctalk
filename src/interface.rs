@@ -1,5 +1,6 @@
 extern crate alloc;
 extern crate spin;
+
 use alloc::sync::Arc;
 use spin::{Mutex, MutexGuard};
 
@@ -101,7 +102,11 @@ where
         Ok(rx_buf)
     }
 
-    pub fn write_bytes(&mut self, bytes: hVec<u8, 260>) -> Result<(), CctalkTransmissionError> {
+    pub fn write_bytes<T: Into<hVec<u8, 260>>>(
+        &mut self,
+        bytes: T,
+    ) -> Result<(), CctalkTransmissionError> {
+        let bytes = bytes.into();
         let data_slice = bytes.as_slice();
         for dat in data_slice {
             let _ = block!(self.uart.write(*dat))
@@ -125,7 +130,6 @@ where
     }
 
     pub fn lock(&self) -> MutexGuard<'_, Cctalk<U, D>> {
-        // Result<MutexGuard<'_, Cctalk<U, D>>, PoisonError<MutexGuard<'_, Cctalk<U, D>>>> {
         self.0.lock()
     }
 
@@ -170,24 +174,21 @@ where
         let mut cctalk = self.lock();
 
         let tx = Msg16::new(0x00, CcTalkHeader::AddressPoll, hVec::new());
-        let tx_bytes = tx
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        // let tx_bytes = tx
+        //     .try_to_bytes()
+        //     .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        let _ = cctalk.write_bytes(tx_bytes.clone())?;
+        let _ = cctalk.write_bytes(tx.clone())?;
 
         if cctalk.echo {
-            match cctalk.read_bytes_exact(20, tx_bytes.len()) {
+            match cctalk.read_bytes_exact(20, tx.clone().packet_len()) {
                 Ok(rx_msg) => {
-                    if rx_msg != tx.try_to_bytes().unwrap() {
-                        // println!("echo: {:?} does not match {:?}", rx_msg, tx);
+                    let tx_bytes: hVec<u8, 260> = tx.into();
+                    if rx_msg != tx_bytes {
                         return Err(CctalkTransmissionError::FailedToReciveEcho);
                     }
                 }
-                Err(_e) => {
-                    // println!("error: {}", e);
-                    return Err(CctalkTransmissionError::CctalkSerialReadError);
-                }
+                Err(_e) => return Err(CctalkTransmissionError::CctalkSerialReadError),
             }
         }
 

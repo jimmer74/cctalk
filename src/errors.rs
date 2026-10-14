@@ -9,6 +9,8 @@ pub enum CctalkMessageError {
     IncorrectDataLen(u8, u8), //incorrect current length, calced data length
     #[error("Wrong chksum: {0}, should be: {1}")]
     IncorrectChksum(u8, u8), //current checksum, correct checksum
+    #[error("Wrong 16-bit chksum: {0}, should be: {1}")]
+    IncorrectChksum16(u16, u16),
     #[error("CCtalk packet too short: {0} bytes (min valid length: 5 bytes)")]
     MessageTooShort(usize),
     #[error("Heapless vec is full, cannot push byte: {0:#02X}")] // current message length
