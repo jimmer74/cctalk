@@ -363,19 +363,6 @@ pub struct CctalkCRC16ChksumMessage {
     chksum_msb: u8,
 }
 
-impl From<CctalkCRC16ChksumMessage> for Cctalk8BitChksumMessage {
-    fn from(value: CctalkCRC16ChksumMessage) -> Self {
-        Self {
-            dest: value.dest,
-            len: value.len,
-            src: value.chksum_lsb,
-            header: value.header,
-            data: value.data,
-            chksum: value.chksum_msb,
-        }
-    }
-}
-
 impl CctalkCRC16ChksumMessage {
     pub fn data_str(&self) -> hString<255> {
         hString::from_utf8(self.data.clone()).unwrap()
