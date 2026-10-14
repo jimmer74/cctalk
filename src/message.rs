@@ -118,6 +118,72 @@ impl CctalkMessage<CctalkCRC16ChksumMessage> {
  *
  *
  *====================================================================== */
+impl Into<hVec<u8, 260>> for Msg8 {
+    fn into(self) -> hVec<u8, 260> {
+        let mut tx_buf = hVec::new();
+
+        _ = tx_buf.push(self.value.dest);
+        _ = tx_buf.push(self.value.len);
+        _ = tx_buf.push(self.value.src);
+        _ = tx_buf.push(self.value.header);
+        for dat in self.value.data.iter() {
+            _ = tx_buf.push(*dat);
+        }
+        _ = tx_buf.push(self.value.chksum);
+
+        tx_buf
+    }
+}
+
+impl TryFrom<hVec<u8, 260>> for Msg8 {
+    type Error = CctalkMessageError;
+
+    fn try_from(value: hVec<u8, 260>) -> Result<Self, Self::Error> {
+        //is packet too short (cctalk packets are 5 bytes minimum)
+        let packet_len = value.len();
+
+        if packet_len <= 4 {
+            return Err(CctalkMessageError::MessageTooShort(packet_len));
+        }
+
+        if value[1] as usize + 5 != packet_len {
+            return Err(CctalkMessageError::IncorrectDataLen(
+                value[1] + 5,
+                packet_len as u8,
+            ));
+        }
+
+        //convert to Msg8
+        let res = Cctalk8BitChksumMessage {
+            src: value[2],
+            dest: value[0],
+            header: value[3],
+            data: if packet_len > 5 {
+                let mut tmp: hVec<u8, 255> = hVec::new();
+                for n in 4..packet_len - 1 {
+                    _ = tmp
+                        .push(value[n as usize])
+                        .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
+                }
+                tmp
+            } else {
+                hVec::new()
+            },
+            len: value[1],
+            chksum: value[packet_len as usize - 1],
+        };
+
+        // is chksum correct?
+        let calc_chksum = res.calc_chksum();
+        let act_chksum = res.chksum;
+
+        if calc_chksum != act_chksum {
+            return Err(CctalkMessageError::IncorrectChksum(act_chksum, calc_chksum));
+        }
+
+        Ok(CctalkMessage { value: res })
+    }
+}
 
 impl CctalkMessage<Cctalk8BitChksumMessage> {
     pub fn new(dest: u8, src: u8, header: CcTalkHeader, data: hVec<u8, 255>) -> Self {
@@ -164,75 +230,8 @@ impl CctalkMessage<Cctalk8BitChksumMessage> {
         }
     }
 
-    pub fn try_from_bytes(
-        data: &[u8],
-    ) -> Result<CctalkMessage<Cctalk8BitChksumMessage>, CctalkMessageError> {
-        let packet_len = data.len();
-
-        if packet_len <= 4 {
-            return Err(CctalkMessageError::MessageTooShort(packet_len));
-        }
-
-        if data[1] as usize + 5 != packet_len {
-            // println!(
-            //     "actual packet len: {}, calculated packet len: {}, \npacket: {:02X?}",
-            //     packet_len,
-            //     data[1] + 5,
-            //     &data[..]
-            // );
-            return Err(CctalkMessageError::IncorrectDataLen(
-                data[1] + 5,
-                packet_len as u8,
-            ));
-        }
-
-        let rx = Cctalk8BitChksumMessage {
-            src: data[2],
-            dest: data[0],
-            header: data[3],
-            data: if packet_len > 5 {
-                let mut tmp: hVec<u8, 255> = hVec::new();
-                for n in 4..packet_len - 1 {
-                    _ = tmp
-                        .push(data[n as usize])
-                        .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-                }
-                tmp
-            } else {
-                hVec::new()
-            },
-            len: data[1],
-            chksum: data[packet_len as usize - 1],
-        };
-
-        Ok(CctalkMessage { value: rx })
-    }
-
-    pub fn try_to_bytes(&self) -> Result<hVec<u8, 260>, CctalkMessageError> {
-        let mut tx_buf = hVec::new();
-
-        _ = tx_buf
-            .push(self.value.dest)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        _ = tx_buf
-            .push(self.value.len)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        _ = tx_buf
-            .push(self.value.src)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        _ = tx_buf
-            .push(self.value.header)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        for dat in self.value.data.iter() {
-            _ = tx_buf
-                .push(*dat)
-                .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-        }
-        _ = tx_buf
-            .push(self.value.chksum)
-            .map_err(|x| CctalkMessageError::HVecFailedToPush(x));
-
-        Ok(tx_buf)
+    pub fn src(&self) -> u8 {
+        self.value.src
     }
 }
 /*=====================================================================================
@@ -285,6 +284,10 @@ where
 
     pub fn packet_len(self: &Self) -> usize {
         self.value.data().len() as usize + 1 + 1 + 1 + 1 + 1
+    }
+
+    pub fn is_ack(&self) -> bool {
+        self.header() == CcTalkHeader::Ack
     }
 }
 
@@ -432,6 +435,7 @@ impl Cctalk8BitChksumMessage {
     }
 }
 
+#[cfg(feature = "std")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,14 +490,13 @@ mod tests {
                 chksum: 0xFF,
             },
         };
-
-        println!("{}", testcase.calc_chksum());
+        std::println!("{}", testcase.calc_chksum());
         let res = testcase.chksum_valid();
         match res {
             Err(e) => {
                 assert_eq!(
-                    String::from("Wrong chksum: 255, should be: 251"),
-                    format!("{}", e)
+                    std::string::String::from("Wrong chksum: 255, should be: 251"),
+                    std::format!("{}", e)
                 )
             }
             _ => {}
@@ -516,8 +519,8 @@ mod tests {
         match res {
             Err(e) => {
                 assert_eq!(
-                    String::from("Wrong data length: 0, should be: 2"),
-                    format!("{}", e)
+                    std::string::String::from("Wrong data length: 0, should be: 2"),
+                    std::format!("{}", e)
                 )
             }
             _ => {}
@@ -553,24 +556,39 @@ mod tests {
 
     #[test]
     fn test_from_bytes() {
-        let cct = CctalkMessage::<Cctalk8BitChksumMessage>::new(
-            0x02,
-            0x01,
-            CcTalkHeader::SimplePoll,
-            hVec::from_array([0x22, 0x01]),
-        );
+        /*============================
+         * TEST #1 - good transaction
+         *============================ */
+        let mut route_bill_to_stacker = [040, 001, 001, 154, 001, 059];
+        let test_case: hVec<u8, 260> = hVec::from_array(route_bill_to_stacker);
 
-        let data = cct
-            .try_to_bytes()
-            .expect("error couldn't convert test msg to bytes - fix the test!'");
+        let test_msg = Msg8::try_from(test_case);
+        let act_msg = Msg8::new(040, 001, CcTalkHeader::RouteBill, hVec::from_array([001]));
 
-        match CctalkMessage::<Cctalk8BitChksumMessage>::try_from_bytes(&data) {
-            Ok(new_cct) => {
-                assert_eq!(cct, new_cct);
-            }
-            Err(e) => {
-                assert_eq!(e, CctalkMessageError::NoChkSum)
-            }
-        }
+        //msg should be correct!
+        assert_eq!(test_msg.unwrap(), act_msg);
+
+        /*==========================
+         * TEST #2 - bad msg chksum
+         *========================== */
+        route_bill_to_stacker[5] = 060; // alter chksum to incorrect value (60 - should be 59)
+        let test_case2: hVec<u8, 260> = hVec::from_array(route_bill_to_stacker);
+
+        let msg2 = Msg8::try_from(test_case2);
+
+        //should be 59, but chksum is 60 so throws an error
+        assert_eq!(Err(CctalkMessageError::IncorrectChksum(60, 59)), msg2);
+
+        /*==============================
+         * TEST #3 - incorrect data len
+         *============================== */
+        route_bill_to_stacker[5] = 059; //reset chksum to correct val
+        route_bill_to_stacker[1] = 002; //set incorrect data len (should be 001)
+        let test_case3: hVec<u8, 260> = hVec::from_array(route_bill_to_stacker);
+
+        let msg3 = Msg8::try_from(test_case3);
+
+        //msg should be 7 bytes total (according to byte 2) but only 6 bytes - so throws an error
+        assert_eq!(Err(CctalkMessageError::IncorrectDataLen(7, 6)), msg3);
     }
 }

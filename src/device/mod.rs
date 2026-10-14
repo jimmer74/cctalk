@@ -146,15 +146,12 @@ where
     U: Read + Write,
     D: DelayNs,
 {
-    pub fn transfer(
+    pub fn transfer<T: Into<hVec<u8, 260>>>(
         &mut self,
-        bytes: hVec<u8, 260>,
+        bytes: T, // hVec<u8, 260>,
         timeout_ms: u32,
-    ) -> Result<hVec<u8, 260>, CctalkTransmissionError>
-    where
-        D: DelayNs,
-        U: Read + Write,
-    {
+    ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
+        let bytes = bytes.into();
         let mut cctalk = self.cctalk.lock();
 
         _ = cctalk.write_bytes(bytes.clone())?;

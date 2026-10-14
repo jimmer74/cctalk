@@ -70,12 +70,13 @@ where
             CcTalkHeader::RouteBill,
             hVec::from_array([cmd_byte]),
         );
-        let res = self.transfer(msg.try_to_bytes().unwrap(), 20)?;
-        let res = Msg8::try_from_bytes(&res)
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-        let header = res.header();
-        if header != CcTalkHeader::Ack {
-            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
+
+        let res = self.transfer(msg, 20)?;
+        let res =
+            Msg8::try_from(res).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        if !res.is_ack() {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(res.header()));
         };
 
         Ok(())
@@ -180,6 +181,11 @@ where
         //convert the 11-byte buffer into a len-5 (a,b) event queue
         let events = self.process_events(event_buf);
 
+        //for debugging purposes
+        #[cfg(feature = "std")]
+        if !events.is_empty() {
+            std::println!("{:?}", events);
+        }
         Ok(events)
     }
 }
@@ -302,13 +308,10 @@ where
             CcTalkHeader::ModifyBillOperatingMode,
             hVec::from_array([cmd_byte]),
         );
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        let rx_bytes = self.transfer(tx_bytes, 80)?;
-        let _msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let rx_bytes = self.transfer(msg, 80)?;
+        let _msg =
+            Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
         // println!("mod bill op mode: {}", msg.header());
 
         /*
@@ -369,13 +372,10 @@ where
             CcTalkHeader::ModifyMasterInhibitStatus,
             payload,
         );
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        let rx_bytes = self.transfer(tx_bytes, 80)?;
-        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let rx_bytes = self.transfer(msg, 80)?;
+        let msg =
+            Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         Ok(msg.header())
     }
@@ -388,13 +388,10 @@ where
             CcTalkHeader::ReadBufferedBillEvents,
             payload,
         );
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        let rx_bytes = self.transfer(tx_bytes, 80)?;
-        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let rx_bytes = self.transfer(msg, 80)?;
+        let msg =
+            Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
         let data_bytes = msg.data();
 
         let ev_cnt = data_bytes[0];
@@ -413,13 +410,9 @@ where
             payload,
         );
 
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        let rx_bytes = self.transfer(tx_bytes, 80)?;
-        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let rx_bytes = self.transfer(msg, 80)?;
+        let msg =
+            Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         Ok(msg.header())
     }
@@ -442,13 +435,9 @@ where
             payload,
         );
 
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        let rx_bytes = self.transfer(tx_bytes, 80)?;
-        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let rx_bytes = self.transfer(msg, 80)?;
+        let msg =
+            Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         // println!("mod slots {:#b} uninhibited: {}", tx_u16, msg.header());
         Ok(msg.header())
@@ -472,12 +461,9 @@ where
                 CcTalkHeader::RequestBillId,
                 payload,
             );
-            let tx_bytes = msg
-                .try_to_bytes()
-                .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-            let rx_bytes = self.transfer(tx_bytes, 80)?;
-            let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
+            let rx_bytes = self.transfer(msg, 80)?;
+            let msg = Msg8::try_from(rx_bytes)
                 .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
             let dat = msg.data().clone();
             if *dat != [0, 0, 0, 0, 0, 0, 0] {
@@ -515,14 +501,11 @@ where
             CcTalkHeader::RequestCountryScalingFactor,
             payload,
         );
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        let rx_bytes = self.transfer(tx_bytes, 80)?;
+        let rx_bytes = self.transfer(msg, 80)?;
 
-        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let msg =
+            Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         for (i, dat) in msg.data().iter().enumerate() {
             currancy.sf[i] = *dat;
@@ -541,13 +524,9 @@ where
             payload,
         );
 
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        match self.transfer(tx_bytes, 80) {
+        match self.transfer(msg, 80) {
             Ok(bytes) => {
-                let msg = Msg8::try_from_bytes(bytes.as_slice()).ok();
+                let msg = Msg8::try_from(bytes).ok();
                 if let Some(msg) = msg {
                     for (i, dat) in msg.data().iter().enumerate() {
                         currancy.rev[i] = *dat;
@@ -584,18 +563,15 @@ where
         timeout_ms: Option<u32>,
     ) -> Result<Msg8, CctalkTransmissionError> {
         let msg = Msg8::new(addr, MASTER_ADDR, header, hVec::new());
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        let rx_bytes = self.transfer(tx_bytes, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
+        let rx_bytes = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
 
-        let rx_msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-        let header = rx_msg.header();
-        if header != CcTalkHeader::Ack {
-            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
-        };
+        let rx_msg =
+            Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+
+        if !rx_msg.is_ack() {
+            return Err(CctalkTransmissionError::CctalkFailedToAck(rx_msg.header()));
+        }
         Ok(rx_msg)
     }
 }

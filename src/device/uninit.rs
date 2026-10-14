@@ -47,11 +47,11 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
 
         //Manufacturer
         res = self.header_only(self.info.addr, RequestManufacturerId, None)?;
-        let manu = hString::<255>::from_utf8(res.data().clone()).unwrap();
+        let manu = res.data_str();
 
         //Model
         res = self.header_only(self.info.addr, CcTalkHeader::RequestProductCode, None)?;
-        let model = hString::<255>::from_utf8(res.data().clone()).unwrap();
+        let model = res.data_str();
 
         let info = DevInfo {
             addr,
@@ -83,13 +83,10 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
         U: Read + Write,
     {
         let msg = Msg8::new(addr, MASTER_ADDR, header, hVec::new());
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
-        let rx_bytes = self.transfer(tx_bytes, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
-        let msg = Msg8::try_from_bytes(rx_bytes.as_slice())
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let rx_bytes = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
+        let msg =
+            Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
 
         if msg.header() != CcTalkHeader::Ack {
             return Err(CctalkTransmissionError::CctalkFailedToAck(header));
@@ -165,17 +162,13 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
             hVec::from_array(REQ_ENC_SUPPORT_BYTES),
         );
 
-        let tx_bytes = msg
-            .try_to_bytes()
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        match self.transfer(tx_bytes, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)) {
+        match self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)) {
             Ok(rx_bytes) => {
                 // println!("enc bytes: {:?}", rx_bytes);
                 if rx_bytes.len() == 17 {
                     //packet layout consists of 17 bytes (see struct below for
                     //layout )
-                    match Msg8::try_from_bytes(rx_bytes.as_slice()) {
+                    match Msg8::try_from(rx_bytes) {
                         Ok(msg) => {
                             let data = msg.data().as_slice();
                             return Ok(EncKey::CctalkEncSupport(CcTalkEncryptionStatus {

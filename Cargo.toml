@@ -14,3 +14,7 @@ heapless = "0.9.3" #no_std compat
 nb = "1.1.0" #no_std compat
 spin = "0.12.3" #no_std_compat
 thiserror = { version = "2.0.20", default-features = false } #no_std compat
+
+
+[features]
+std = []
