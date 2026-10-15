@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use spin::{Mutex, MutexGuard};
 
 use super::headers::CcTalkHeader;
-use crate::{errors::CctalkTransmissionError, message::Msg16};
+use crate::{device::CctalkEncStatus, errors::CctalkTransmissionError, message::CctalkMessage};
 use embedded_hal::delay::DelayNs;
 use embedded_hal_nb::serial::{Read, Write};
 use heapless::Vec as hVec;
@@ -167,16 +167,16 @@ where
         }
     }
 
-    pub fn addr_scan_16(
-        &mut self,
-        timeout_ms: u32,
-    ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
+    pub fn addr_scan_16(&self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let mut cctalk = self.lock();
 
-        let tx = Msg16::new(0x00, CcTalkHeader::AddressPoll, hVec::new());
-        // let tx_bytes = tx
-        //     .try_to_bytes()
-        //     .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let tx = CctalkMessage::new(
+            CctalkEncStatus::Unenc16bit,
+            None,
+            0x00,
+            CcTalkHeader::AddressPoll,
+            hVec::new(),
+        );
 
         let _ = cctalk.write_bytes(tx.clone())?;
 
@@ -204,7 +204,6 @@ mod tests {
     use super::*;
     use crate::device::CctalkDevice;
     use crate::headers::CcTalkHeader;
-    use crate::message::Msg8;
     use crate::{errors::*, headers::CcTalkHeader::Ack};
     use embedded_hal::delay::DelayNs;
     use embedded_hal_mock::eh1::serial::{Mock as UartMock, Transaction as UartTransaction};

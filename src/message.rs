@@ -1,16 +1,116 @@
+use crate::{device::CctalkEncStatus, errors::CctalkTransmissionError};
+
 use super::errors::CctalkMessageError;
 use super::headers::CcTalkHeader;
-use heapless::String as hString;
-use heapless::Vec as hVec;
-use heapless::format;
-pub type Msg8 = CctalkMessage<Cctalk8BitChksumMessage>;
-pub type Msg16 = CctalkMessage<CctalkCRC16ChksumMessage>;
+use heapless::{String as hString, Vec as hVec, format};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct CctalkMessage<T> {
-    value: T,
+pub enum CctalkMessage {
+    MSG8(Cctalk8BitChksumMessage),
+    MSG16(CctalkCRC16ChksumMessage),
 }
 
+impl CctalkMessage {
+    pub fn new(
+        r#type: CctalkEncStatus,
+        src: Option<u8>,
+        dest: u8,
+        header: CcTalkHeader,
+        data: hVec<u8, 255>,
+    ) -> Self {
+        let ret = match r#type {
+            CctalkEncStatus::Unenc16bit => {
+                Self::MSG16(CctalkCRC16ChksumMessage::new(dest, header, data))
+            }
+            _ => Self::MSG8(Cctalk8BitChksumMessage::new(
+                dest,
+                src.unwrap(),
+                header,
+                data,
+            )),
+        };
+
+        ret
+    }
+
+    pub fn msg_from_bytes(
+        r#type: CctalkEncStatus,
+        rx_bytes: hVec<u8, 260>,
+    ) -> Result<CctalkMessage, CctalkTransmissionError> {
+        match r#type {
+            CctalkEncStatus::Unenc16bit => {
+                let msg = CctalkCRC16ChksumMessage::try_from(rx_bytes)
+                    .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+                Ok(Self::MSG16(msg))
+            }
+            _ => {
+                let msg = Cctalk8BitChksumMessage::try_from(rx_bytes)
+                    .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+                Ok(Self::MSG8(msg))
+            }
+        }
+    }
+
+    pub fn data(&self) -> &hVec<u8, 255> {
+        match self {
+            CctalkMessage::MSG8(msg) => &msg.data,
+            CctalkMessage::MSG16(msg) => &msg.data,
+        }
+    }
+
+    pub fn dest(self: &Self) -> u8 {
+        match self {
+            CctalkMessage::MSG8(msg) => msg.dest,
+            CctalkMessage::MSG16(msg) => msg.dest,
+        }
+    }
+
+    pub fn header(&self) -> CcTalkHeader {
+        match self {
+            CctalkMessage::MSG8(msg) => msg.header.into(),
+            CctalkMessage::MSG16(msg) => msg.header.into(),
+        }
+    }
+    pub fn len(self: &Self) -> u8 {
+        match self {
+            CctalkMessage::MSG8(msg) => msg.len,
+            CctalkMessage::MSG16(msg) => msg.len,
+        }
+    }
+    pub fn packet_len(&self) -> usize {
+        match self {
+            CctalkMessage::MSG8(msg) => msg.packet_len(),
+            CctalkMessage::MSG16(msg) => msg.packet_len(),
+        }
+    }
+
+    pub fn is_ack(&self) -> bool {
+        match self {
+            CctalkMessage::MSG8(msg) => msg.header == CcTalkHeader::Ack as u8,
+            CctalkMessage::MSG16(msg) => msg.header == CcTalkHeader::Ack as u8,
+        }
+    }
+
+    pub fn data_str(&self) -> hString<255> {
+        match self {
+            CctalkMessage::MSG8(msg) => hString::from_utf8(msg.data.clone()).unwrap(),
+            CctalkMessage::MSG16(msg) => hString::from_utf8(msg.data.clone()).unwrap(),
+        }
+    }
+
+    pub fn len_valid(self: &Self) -> Result<u8, CctalkMessageError> {
+        let (data, len) = match self {
+            CctalkMessage::MSG8(msg) => (msg.data.clone(), msg.len),
+            CctalkMessage::MSG16(msg) => (msg.data.clone(), msg.len),
+        };
+
+        if data.len() as u8 == len {
+            Ok(len)
+        } else {
+            Err(CctalkMessageError::IncorrectDataLen(len, data.len() as u8))
+        }
+    }
+}
 /*====================================================================
  *
  *
@@ -18,24 +118,42 @@ pub struct CctalkMessage<T> {
  *
  *
  *==================================================================== */
-impl Into<hVec<u8, 260>> for Msg16 {
+impl Into<hVec<u8, 260>> for CctalkMessage {
     fn into(self) -> hVec<u8, 260> {
-        let mut tx_buf = hVec::new();
+        match self {
+            CctalkMessage::MSG8(msg8) => {
+                let mut tx_buf = hVec::new();
 
-        _ = tx_buf.push(self.value.dest);
-        _ = tx_buf.push(self.value.len);
-        _ = tx_buf.push(self.value.chksum_lsb);
-        _ = tx_buf.push(self.value.header);
-        for dat in self.value.data.iter() {
-            _ = tx_buf.push(*dat);
+                _ = tx_buf.push(msg8.dest);
+                _ = tx_buf.push(msg8.len);
+                _ = tx_buf.push(msg8.src);
+                _ = tx_buf.push(msg8.header);
+                for dat in msg8.data.iter() {
+                    _ = tx_buf.push(*dat);
+                }
+                _ = tx_buf.push(msg8.chksum);
+
+                tx_buf
+            }
+            CctalkMessage::MSG16(msg16) => {
+                let mut tx_buf = hVec::new();
+
+                _ = tx_buf.push(msg16.dest);
+                _ = tx_buf.push(msg16.len);
+                _ = tx_buf.push(msg16.chksum_lsb);
+                _ = tx_buf.push(msg16.header);
+                for dat in msg16.data.iter() {
+                    _ = tx_buf.push(*dat);
+                }
+                _ = tx_buf.push(msg16.chksum_msb);
+
+                tx_buf
+            }
         }
-        _ = tx_buf.push(self.value.chksum_msb);
-
-        tx_buf
     }
 }
 
-impl TryFrom<hVec<u8, 260>> for Msg16 {
+impl TryFrom<hVec<u8, 260>> for CctalkCRC16ChksumMessage {
     type Error = CctalkMessageError;
 
     fn try_from(value: hVec<u8, 260>) -> Result<Self, Self::Error> {
@@ -83,11 +201,11 @@ impl TryFrom<hVec<u8, 260>> for Msg16 {
             ));
         }
 
-        Ok(CctalkMessage { value: res })
+        Ok(res)
     }
 }
 
-impl CctalkMessage<CctalkCRC16ChksumMessage> {
+impl CctalkCRC16ChksumMessage {
     //length and chksum are calced from supplied data (source, dest, header, data).
     //if everything else is correct, then message will be correct
 
@@ -105,13 +223,13 @@ impl CctalkMessage<CctalkCRC16ChksumMessage> {
         msg.chksum_lsb = chksum[0];
         msg.chksum_msb = chksum[1];
 
-        Self { value: msg }
+        msg
     }
 
     pub fn chksum_valid(self: &Self) -> Result<u16, CctalkMessageError> {
         //happy path, chksum exists
-        let calc_chksum = self.value.calc_chksum();
-        let curr_chksum = (self.value.chksum_msb as u16) << 8 | self.value.chksum_lsb as u16;
+        let calc_chksum = self.calc_chksum();
+        let curr_chksum = (self.chksum_msb as u16) << 8 | self.chksum_lsb as u16;
         if curr_chksum == calc_chksum {
             Ok(curr_chksum)
         } else {
@@ -129,24 +247,11 @@ impl CctalkMessage<CctalkCRC16ChksumMessage> {
  *
  *
  *====================================================================== */
-impl Into<hVec<u8, 260>> for Msg8 {
-    fn into(self) -> hVec<u8, 260> {
-        let mut tx_buf = hVec::new();
+// impl Into<hVec<u8, 260>> for Msg8 {
+//     fn into(self) -> hVec<u8, 260> {}
+// }
 
-        _ = tx_buf.push(self.value.dest);
-        _ = tx_buf.push(self.value.len);
-        _ = tx_buf.push(self.value.src);
-        _ = tx_buf.push(self.value.header);
-        for dat in self.value.data.iter() {
-            _ = tx_buf.push(*dat);
-        }
-        _ = tx_buf.push(self.value.chksum);
-
-        tx_buf
-    }
-}
-
-impl TryFrom<hVec<u8, 260>> for Msg8 {
+impl TryFrom<hVec<u8, 260>> for Cctalk8BitChksumMessage {
     type Error = CctalkMessageError;
 
     fn try_from(value: hVec<u8, 260>) -> Result<Self, Self::Error> {
@@ -192,11 +297,11 @@ impl TryFrom<hVec<u8, 260>> for Msg8 {
             return Err(CctalkMessageError::IncorrectChksum(act_chksum, calc_chksum));
         }
 
-        Ok(CctalkMessage { value: res })
+        Ok(res)
     }
 }
 
-impl CctalkMessage<Cctalk8BitChksumMessage> {
+impl Cctalk8BitChksumMessage {
     pub fn new(dest: u8, src: u8, header: CcTalkHeader, data: hVec<u8, 255>) -> Self {
         let data_len = data.len() as u8;
 
@@ -210,20 +315,18 @@ impl CctalkMessage<Cctalk8BitChksumMessage> {
         };
 
         msg.chksum = msg.calc_chksum();
-        Self { value: msg }
+        msg
     }
 
     pub fn chksum(self: &Self) -> u8 {
-        self.value.chksum
+        self.chksum
     }
 
     pub fn calc_chksum(self: &Self) -> u8 {
-        let data_sum = self.value.data.iter().map(|&x| x as u16).sum::<u16>();
-        let proto_sum: u8 = (self.value.dest as u16
-            + self.value.len as u16
-            + self.value.src as u16
-            + self.value.header as u16
-            + data_sum) as u8;
+        let data_sum = self.data.iter().map(|&x| x as u16).sum::<u16>();
+        let proto_sum: u8 =
+            (self.dest as u16 + self.len as u16 + self.src as u16 + self.header as u16 + data_sum)
+                as u8;
         (256 - proto_sum as u16) as u8
     }
 
@@ -231,18 +334,18 @@ impl CctalkMessage<Cctalk8BitChksumMessage> {
         //happy path, chksum exists
         let calc_chksum = self.calc_chksum();
 
-        if self.value.chksum == calc_chksum {
-            Ok(self.value.chksum)
+        if self.chksum == calc_chksum {
+            Ok(self.chksum)
         } else {
             Err(CctalkMessageError::IncorrectChksum(
-                self.value.chksum,
+                self.chksum,
                 calc_chksum,
             ))
         }
     }
 
     pub fn src(&self) -> u8 {
-        self.value.src
+        self.src
     }
 }
 /*=====================================================================================
@@ -252,55 +355,55 @@ impl CctalkMessage<Cctalk8BitChksumMessage> {
  *
  *
  *===================================================================================== */
-impl<M> CctalkMessage<M>
-where
-    M: MessageType,
-{
-    pub fn inner(&self) -> &M {
-        &self.value
-    }
-
-    pub fn data_str(&self) -> hString<255>
-    where
-        M: MessageType,
-    {
-        hString::from_utf8(self.value.data().clone()).unwrap()
-    }
-
-    pub fn len_valid(self: &Self) -> Result<u8, CctalkMessageError> {
-        if self.value.data().len() as u8 == self.value.len() {
-            Ok(self.value.len())
-        } else {
-            Err(CctalkMessageError::IncorrectDataLen(
-                self.value.len(),
-                self.value.data().len() as u8,
-            ))
-        }
-    }
-
-    pub fn data(&self) -> &hVec<u8, 255> {
-        &self.value.data()
-    }
-    pub fn dest(self: &Self) -> u8 {
-        self.value.dest()
-    }
-
-    pub fn header(self: &Self) -> CcTalkHeader {
-        self.value.header().into()
-    }
-
-    pub fn len(self: &Self) -> u8 {
-        self.value.data().len() as u8
-    }
-
-    pub fn packet_len(self: &Self) -> usize {
-        self.value.data().len() as usize + 1 + 1 + 1 + 1 + 1
-    }
-
-    pub fn is_ack(&self) -> bool {
-        self.header() == CcTalkHeader::Ack
-    }
-}
+// impl<M> CctalkMessage<M>
+// where
+//     M: MessageType,
+// {
+//     pub fn inner(&self) -> &M {
+//         &self.value
+//     }
+//
+//     pub fn data_str(&self) -> hString<255>
+//     where
+//         M: MessageType,
+//     {
+//         hString::from_utf8(self.value.data().clone()).unwrap()
+//     }
+//
+//     pub fn len_valid(self: &Self) -> Result<u8, CctalkMessageError> {
+//         if self.value.data().len() as u8 == self.value.len() {
+//             Ok(self.value.len())
+//         } else {
+//             Err(CctalkMessageError::IncorrectDataLen(
+//                 self.value.len(),
+//                 self.value.data().len() as u8,
+//             ))
+//         }
+//     }
+//
+//     pub fn data(&self) -> &hVec<u8, 255> {
+//         &self.value.data()
+//     }
+//     pub fn dest(self: &Self) -> u8 {
+//         self.value.dest()
+//     }
+//
+//     pub fn header(self: &Self) -> CcTalkHeader {
+//         self.value.header().into()
+//     }
+//
+//     pub fn len(self: &Self) -> u8 {
+//         self.value.data().len() as u8
+//     }
+//
+//     pub fn packet_len(self: &Self) -> usize {
+//         self.value.data().len() as usize + 1 + 1 + 1 + 1 + 1
+//     }
+//
+//     pub fn is_ack(&self) -> bool {
+//         self.header() == CcTalkHeader::Ack
+//     }
+// }
 
 pub trait MessageType {
     fn data(&self) -> &hVec<u8, 255>;
@@ -402,6 +505,10 @@ impl CctalkCRC16ChksumMessage {
 
         chksum
     }
+
+    // pub fn header(&self) -> CcTalkHeader {
+    //     self.header.into()
+    // }
 }
 
 impl core::fmt::Display for Cctalk8BitChksumMessage {
@@ -420,15 +527,15 @@ impl core::fmt::Display for Cctalk8BitChksumMessage {
     }
 }
 
-impl Cctalk8BitChksumMessage {
-    pub fn calc_chksum(self: &Self) -> u8 {
-        let data_sum = self.data.iter().map(|&x| x as u16).sum::<u16>();
-        let proto_sum: u8 =
-            (self.dest as u16 + self.len as u16 + self.src as u16 + self.header as u16 + data_sum)
-                as u8;
-        (256 - proto_sum as u16) as u8
-    }
-}
+// impl Cctalk8BitChksumMessage {
+//     pub fn calc_chksum(self: &Self) -> u8 {
+//         let data_sum = self.data.iter().map(|&x| x as u16).sum::<u16>();
+//         let proto_sum: u8 =
+//             (self.dest as u16 + self.len as u16 + self.src as u16 + self.header as u16 + data_sum)
+//                 as u8;
+//         (256 - proto_sum as u16) as u8
+//     }
+// }
 
 #[cfg(feature = "std")]
 #[cfg(test)]
@@ -441,8 +548,8 @@ mod tests {
     fn test_16_bit_crc() {
         let msg = CctalkMessage::<CctalkCRC16ChksumMessage>::new(0x28, ResetDevice, hVec::new());
 
-        assert_eq!(msg.value.chksum_lsb, 0x46);
-        assert_eq!(msg.value.chksum_msb, 0x3f);
+        assert_eq!(msg.chksum_lsb, 0x46);
+        assert_eq!(msg.chksum_msb, 0x3f);
     }
 
     #[test]

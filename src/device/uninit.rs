@@ -1,7 +1,9 @@
+use crate::errors::CctalkMessageError;
+
 use super::*;
 
-impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
-    pub fn new(addr: u8, cctalk: SharedCctalk<U, D>) -> CctalkDevice<NoChksum, Unprobed, U, D>
+impl<U, D> CctalkDevice<Unprobed, U, D> {
+    pub fn new(addr: u8, cctalk: SharedCctalk<U, D>) -> CctalkDevice<Unprobed, U, D>
     where
         U: Read + Write,
         D: DelayNs,
@@ -12,166 +14,167 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
                 ..Default::default()
             },
             cctalk: cctalk,
-            _enc_state: PhantomData,
             _init_state: PhantomData,
             currancy: None,
-            chksum: Default::default(),
+            r#type: Default::default(),
             encrypted: Default::default(),
             events: ECs::default(),
         }
     }
 
-    pub fn probe(mut self) -> Result<CctalkDevice<Unenc8Bit, UnInit, U, D>, CctalkTransmissionError>
+    pub fn probe(mut self) -> Result<CctalkDevice<UnInit, U, D>, CctalkTransmissionError>
     where
         D: DelayNs,
         U: Read + Write,
     {
         let addr = self.info.addr;
-        let mut res = self.header_only(self.info.addr, CcTalkHeader::SimplePoll, None)?;
-        _ = res;
+        if let Ok(res) = self.header_only8(self.info.addr, CcTalkHeader::SimplePoll, None) {
+            #[cfg(feature = "std")]
+            std::println!("found 8 bit device!");
+            self.r#type = CctalkEncStatus::Unenc8Bit;
+        } else {
+            if let Ok(res) = self.header_only16(self.info.addr, CcTalkHeader::SimplePoll, None) {
+                #[cfg(feature = "std")]
+                std::println!("found 16-bit device!");
+                self.r#type = CctalkEncStatus::Unenc16bit;
+            } else {
+                #[cfg(feature = "std")]
+                std::println!("Unable to ascertain device chksum type!");
+                return Err(CctalkTransmissionError::CctalkMessageError(
+                    CctalkMessageError::NoChkSum,
+                ));
+            };
+        };
 
-        //Device type
-        res = self.header_only(self.info.addr, CcTalkHeader::RequestEquipmentCategory, None)?;
+        match self.r#type {
+            CctalkEncStatus::Unenc8Bit => {
+                //Device type
+                let mut res = self.header_only8(
+                    self.info.addr,
+                    CcTalkHeader::RequestEquipmentCategory,
+                    None,
+                )?;
 
-        let kind = CctalkDeviceKind::from(res.data().as_slice());
+                let kind = CctalkDeviceKind::from(res.data().as_slice());
 
-        if kind == CctalkDeviceKind::Unknown {
-            return Err(CctalkTransmissionError::CctalkDeviceTypeUnknown);
+                if kind == CctalkDeviceKind::Unknown {
+                    return Err(CctalkTransmissionError::CctalkDeviceTypeUnknown);
+                }
+
+                //Encryption Key/Status
+                let encrypted = match self.retrieve_enc_key(Some(200)) {
+                    Ok(val) => val,
+                    Err(_e) => None,
+                };
+
+                //Manufacturer
+                res =
+                    self.header_only8(self.info.addr, CcTalkHeader::RequestManufacturerId, None)?;
+                let manu = res.data_str();
+
+                //Model
+                res = self.header_only8(self.info.addr, CcTalkHeader::RequestProductCode, None)?;
+                let model = res.data_str();
+
+                let info = DevInfo {
+                    addr,
+                    kind,
+                    manu,
+                    model,
+                };
+
+                Ok(CctalkDevice {
+                    info,
+                    currancy: self.currancy,
+                    cctalk: self.cctalk,
+                    events: ECs::default(),
+                    r#type: self.r#type,
+                    encrypted: encrypted,
+                    _init_state: PhantomData,
+                })
+            }
+            CctalkEncStatus::Unenc16bit => {
+                //Device type
+                let mut res = self.header_only16(
+                    self.info.addr,
+                    CcTalkHeader::RequestEquipmentCategory,
+                    None,
+                )?;
+
+                let kind = CctalkDeviceKind::from(res.data().as_slice());
+
+                if kind == CctalkDeviceKind::Unknown {
+                    return Err(CctalkTransmissionError::CctalkDeviceTypeUnknown);
+                }
+
+                //Encryption Key/Status
+                let encrypted = match self.retrieve_enc_key(Some(200)) {
+                    Ok(val) => val,
+                    Err(_e) => None,
+                };
+
+                //Manufacturer
+                res =
+                    self.header_only16(self.info.addr, CcTalkHeader::RequestManufacturerId, None)?;
+                let manu = res.data_str();
+
+                //Model
+                res = self.header_only16(self.info.addr, CcTalkHeader::RequestProductCode, None)?;
+                let model = res.data_str();
+
+                let info = DevInfo {
+                    addr,
+                    kind,
+                    manu,
+                    model,
+                };
+
+                Ok(CctalkDevice {
+                    info,
+                    currancy: self.currancy,
+                    cctalk: self.cctalk,
+                    events: ECs::default(),
+                    r#type: self.r#type,
+                    encrypted: encrypted,
+                    _init_state: PhantomData,
+                })
+            }
+            _ => Err(CctalkTransmissionError::CctalkMessageError(
+                CctalkMessageError::NoChkSum,
+            )),
         }
-
-        //Encryption Key/Status
-        let encrypted = match self.retrieve_enc_key(self.info.addr, Some(200)) {
-            Ok(val) => val,
-            Err(_e) => EncKey::CctalkUnEncrypted,
-        };
-
-        //Manufacturer
-        res = self.header_only(self.info.addr, RequestManufacturerId, None)?;
-        let manu = res.data_str();
-
-        //Model
-        res = self.header_only(self.info.addr, CcTalkHeader::RequestProductCode, None)?;
-        let model = res.data_str();
-
-        let info = DevInfo {
-            addr,
-            kind,
-            manu,
-            model,
-        };
-
-        Ok(CctalkDevice {
-            info,
-            currancy: self.currancy,
-            cctalk: self.cctalk,
-            events: ECs::default(),
-            chksum: CctalkDeviceCRC::Simple8bit,
-            encrypted: encrypted,
-            _enc_state: PhantomData,
-            _init_state: PhantomData,
-        })
-    }
-
-    pub fn header_only(
-        &mut self,
-        addr: u8,
-        header: CcTalkHeader,
-        timeout_ms: Option<u32>,
-    ) -> Result<Msg8, CctalkTransmissionError>
-    where
-        D: DelayNs,
-        U: Read + Write,
-    {
-        let msg = Msg8::new(addr, MASTER_ADDR, header, hVec::new());
-
-        let rx_bytes = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
-        let msg =
-            Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-
-        if msg.header() != CcTalkHeader::Ack {
-            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
-        };
-
-        Ok(msg)
-    }
-
-    pub fn probe16(
-        mut self,
-    ) -> Result<CctalkDevice<Unenc16Bit, UnInit, U, D>, CctalkTransmissionError>
-    where
-        D: DelayNs,
-        U: Read + Write,
-    {
-        let addr = self.info.addr;
-        #[allow(unused_assignments)]
-        let mut res = self.header_only(addr, SimplePoll, None)?;
-
-        //Device type
-        res = self.header_only(addr, RequestEquipmentCategory, None)?;
-
-        let kind = CctalkDeviceKind::from(res.data().as_slice());
-
-        if kind == CctalkDeviceKind::Unknown {
-            return Err(CctalkTransmissionError::CctalkDeviceTypeUnknown);
-        }
-
-        //Encryption Key/Status
-        let encrypted = self.retrieve_enc_key(addr, Some(200))?;
-
-        //Manufacturer
-        res = self.header_only(addr, RequestManufacturerId, None)?;
-        let manu = hString::<255>::from_utf8(res.data().clone()).unwrap();
-
-        //Model
-        res = self.header_only(addr, CcTalkHeader::RequestProductCode, None)?;
-        let model = hString::<255>::from_utf8(res.data().clone()).unwrap();
-
-        let info = DevInfo {
-            addr,
-            kind,
-            manu,
-            model,
-        };
-
-        Ok(CctalkDevice {
-            info,
-
-            cctalk: self.cctalk,
-            currancy: self.currancy,
-            chksum: CctalkDeviceCRC::Simple8bit,
-            encrypted: encrypted,
-            _enc_state: PhantomData,
-            _init_state: PhantomData,
-            events: ECs::default(),
-        })
     }
 
     fn retrieve_enc_key(
         &mut self,
-        addr: u8,
+        // addr: u8,
         timeout_ms: Option<u32>,
-    ) -> Result<CctalkEncKey, CctalkTransmissionError>
+    ) -> Result<Option<CcTalkEncryptionKeys>, CctalkTransmissionError>
     where
         D: DelayNs,
         U: Read + Write,
     {
-        let msg = Msg8::new(
-            addr,
-            MASTER_ADDR,
+        let msg = CctalkMessage::new(
+            self.r#type.clone(),
+            if self.r#type == CctalkEncStatus::Unenc8Bit {
+                Some(MASTER_ADDR)
+            } else {
+                None
+            },
+            self.info.addr,
             CcTalkHeader::RequestEncryptionSupport,
             hVec::from_array(REQ_ENC_SUPPORT_BYTES),
         );
-
         match self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)) {
             Ok(rx_bytes) => {
                 // println!("enc bytes: {:?}", rx_bytes);
                 if rx_bytes.len() == 17 {
                     //packet layout consists of 17 bytes (see struct below for
                     //layout )
-                    match Msg8::try_from(rx_bytes) {
+                    match CctalkMessage::msg_from_bytes(self.r#type.clone(), rx_bytes) {
                         Ok(msg) => {
                             let data = msg.data().as_slice();
-                            return Ok(EncKey::CctalkEncSupport(CcTalkEncryptionStatus {
+                            return Ok(Some(CcTalkEncryptionKeys {
                                 proto_level: data[0],
                                 command_level: data[1],
                                 proto_key_size: data[2],
@@ -185,10 +188,10 @@ impl<U, D> CctalkDevice<NoChksum, Unprobed, U, D> {
                                 ],
                             }));
                         }
-                        Err(e) => Err(CctalkTransmissionError::CctalkMessageError(e)),
+                        Err(e) => Err(e),
                     }
                 } else {
-                    Ok(EncKey::CctalkUnEncrypted)
+                    Ok(None)
                 }
             }
             Err(e) => {

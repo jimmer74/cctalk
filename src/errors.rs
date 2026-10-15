@@ -43,81 +43,82 @@ pub enum CctalkTransmissionError {
     CctalkDeviceTypeUnknown,
 }
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Error, PartialEq, PartialOrd)]
 pub enum EventError {
     #[error("MasterInhibitActive")]
-    MasterInhibitActive = 0x00,
+    MasterInhibitActive = 0,
     #[error("BillReturnedFromEscrow")]
-    BillReturnedFromEscrow = 0x01,
+    BillReturnedFromEscrow = 1,
     #[error("InvalidBillValidation")]
-    InvalidBillValidation = 0x02,
+    InvalidBillValidation = 2,
     #[error("InvalidBillTransport")]
-    InvalidBillTransport = 0x03,
+    InvalidBillTransport = 3,
     #[error("InhibitedBillCctalk")]
-    InhibitedBillCctalk = 0x04,
+    InhibitedBillCctalk = 4,
     #[error("InhibitedBillDipSW")]
-    InhibitedBillDipSW = 0x05,
+    InhibitedBillDipSW = 5,
     #[error("BillJammedTransportUnsafe")]
-    BillJammedTransportUnsafe = 0x06,
+    BillJammedTransportUnsafe = 6,
     #[error("BillJammedStacker")]
-    BillJammedStacker = 0x07,
+    BillJammedStacker = 7,
     #[error("BillPulledBackwards")]
-    BillPulledBackwards = 0x08,
+    BillPulledBackwards = 8,
     #[error("BillTamper")]
-    BillTamper = 0x09,
+    BillTamper = 9,
     #[error("StackerOk")]
-    StackerOk = 0x0A,
+    StackerOk = 10,
     #[error("StackerRemoved")]
-    StackerRemoved = 0x0B,
+    StackerRemoved = 11,
     #[error("StackerInserted")]
-    StackerInserted = 0x0C,
+    StackerInserted = 12,
     #[error("StackerFaulty")]
-    StackerFaulty = 0x0D,
+    StackerFaulty = 13,
     #[error("StackerFull")]
-    StackerFull = 0x0E,
+    StackerFull = 14,
     #[error("StackerJammed")]
-    StackerJammed = 0x0F,
+    StackerJammed = 15,
     #[error("BillJammedTransportSafe")]
-    BillJammedTransportSafe = 0x10,
+    BillJammedTransportSafe = 16,
     #[error("OptoFraudDetected")]
-    OptoFraudDetected = 0x11,
+    OptoFraudDetected = 17,
     #[error("StringFraudDetected")]
-    StringFraudDetected = 0x12,
+    StringFraudDetected = 18,
     #[error("AntiStringMechFaulty")]
-    AntiStringMechFaulty = 0x13,
+    AntiStringMechFaulty = 19,
     #[error("BarcodeDetected")]
-    BarcodeDetected = 0x14,
+    BarcodeDetected = 20,
     #[error("UnknownBillStacked")]
-    UnknownBillStacked = 0x15,
+    UnknownBillStacked = 21,
     #[error("UnknownError")]
-    UnknownError = 0x16,
+    UnknownError = 22,
 }
 
 impl From<u8> for EventError {
     fn from(value: u8) -> Self {
         match value {
-            0x01 => Self::MasterInhibitActive,
-            0x02 => Self::BillReturnedFromEscrow,
-            0x03 => Self::InvalidBillValidation,
-            0x04 => Self::InvalidBillTransport,
-            0x05 => Self::InhibitedBillCctalk,
-            0x06 => Self::InhibitedBillDipSW,
-            0x07 => Self::BillJammedTransportUnsafe,
-            0x08 => Self::BillJammedStacker,
-            0x09 => Self::BillPulledBackwards,
-            0x0A => Self::BillTamper,
-            0x0B => Self::StackerOk,
-            0x0C => Self::StackerRemoved,
-            0x0D => Self::StackerInserted,
-            0x0E => Self::StackerFaulty,
-            0x0F => Self::StackerFull,
-            0x10 => Self::StackerJammed,
-            0x11 => Self::BillJammedTransportSafe,
-            0x12 => Self::OptoFraudDetected,
-            0x13 => Self::StringFraudDetected,
-            0x14 => Self::AntiStringMechFaulty,
-            0x15 => Self::BarcodeDetected,
-            _ => Self::UnknownBillStacked,
+            0 => Self::MasterInhibitActive,
+            1 => Self::BillReturnedFromEscrow,
+            2 => Self::InvalidBillValidation,
+            3 => Self::InvalidBillTransport,
+            4 => Self::InhibitedBillCctalk,
+            5 => Self::InhibitedBillDipSW,
+            6 => Self::BillJammedTransportUnsafe,
+            7 => Self::BillJammedStacker,
+            8 => Self::BillPulledBackwards,
+            9 => Self::BillTamper,
+            10 => Self::StackerOk,
+            11 => Self::StackerRemoved,
+            12 => Self::StackerInserted,
+            13 => Self::StackerFaulty,
+            14 => Self::StackerFull,
+            15 => Self::StackerJammed,
+            16 => Self::BillJammedTransportSafe,
+            17 => Self::OptoFraudDetected,
+            18 => Self::StringFraudDetected,
+            19 => Self::AntiStringMechFaulty,
+            20 => Self::BarcodeDetected,
+            21 => Self::UnknownBillStacked,
+            _ => Self::UnknownError,
         }
     }
 }
