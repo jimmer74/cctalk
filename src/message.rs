@@ -107,6 +107,20 @@ impl CctalkMessage<CctalkCRC16ChksumMessage> {
 
         Self { value: msg }
     }
+
+    pub fn chksum_valid(self: &Self) -> Result<u16, CctalkMessageError> {
+        //happy path, chksum exists
+        let calc_chksum = self.value.calc_chksum();
+        let curr_chksum = (self.value.chksum_msb as u16) << 8 | self.value.chksum_lsb as u16;
+        if curr_chksum == calc_chksum {
+            Ok(curr_chksum)
+        } else {
+            Err(CctalkMessageError::IncorrectChksum16(
+                curr_chksum,
+                calc_chksum,
+            ))
+        }
+    }
 }
 /*======================================================================
  *
@@ -364,10 +378,6 @@ pub struct CctalkCRC16ChksumMessage {
 }
 
 impl CctalkCRC16ChksumMessage {
-    pub fn data_str(&self) -> hString<255> {
-        hString::from_utf8(self.data.clone()).unwrap()
-    }
-
     fn calc_chksum(&self) -> u16 {
         //WARN: Kermit uses x^16 + x^12+x^5 + 1 Polynomial
         //Initial CRC Reg = 0x0000
@@ -409,6 +419,7 @@ impl core::fmt::Display for Cctalk8BitChksumMessage {
         write!(f, "{}", msg.as_view())
     }
 }
+
 impl Cctalk8BitChksumMessage {
     pub fn calc_chksum(self: &Self) -> u8 {
         let data_sum = self.data.iter().map(|&x| x as u16).sum::<u16>();
