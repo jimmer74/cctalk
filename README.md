@@ -35,9 +35,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let _ = uart.set_hardware_flow_control(false);
     let _ = uart.set_write_mode(true);
     let delay = rpi_pal::hal::Delay;
-    let mut cctalk = SharedCctalk::new(uart, delay, true);
+    //If your hw setup produces an rx echo everytime you tx
+    //(which is normal) then you need to set this to true
+    let echo = true;
+    let cctalk = SharedCctalk::new(uart, delay, echo);
 
-    println!("scanning 8bit addresses....");
+    println!("scanning cctalk addresses....");
     let addrs = cctalk.addr_scan(ADDR_SCAN_TIMEOUT)?;
     
     //this only cares about the 1st device it detects
@@ -54,52 +57,93 @@ fn main() -> Result<(), Box<dyn Error>> {
        
 
         println!("probing addr: {}", addrs[0]);
-        let device = CctalkDevice::new(addrs[0], &mut cctalk);
+        let device = CctalkDevice::new(addrs[0], cctalk);
         let device = device.probe()?;
         println!(
             "device found: {} {} {}",
-            device.manu, device.kind, device.model
+            device.info.manu, device.info.kind, device.info.model
         );
+
+        //enable escrow if you want to respond to notes and then reject
+        //valid notes based on some criteria in you event loop
+        let escrow = true;
+        let mut device = device.init(escrow)?;
         
-        let mut device = device.init()?;
         println!(
             "{} {} initialised! Ready for use\n",
-            device.kind, device.model
+            device.info.kind, device.info.model
         );
 
-        let mut credits = 0_f32;
+        //main polling loop for NV event counter
+        let mut last_event: IntEvent = IntEvent::default();
         loop {
-            let res = device.get_buffered_credits()?;
-
-            if !res.is_empty() {
-                for credit in res {
-                    println!("Accepted £{:.2} note", credit);
-                    credits += credit;
-                    println!("Total credit: £{:.2}", credits);
+            match device.get_int_events() {
+                Ok(res) => {
+                    if !res.is_empty() {
+                        for event in res {
+                            match event.clone() {
+                                IntEvent::StackedNote(slot) => {
+                                    //rejected barcode ticket produces spurious slot 1 acceptance
+                                    //event on non-=barcode enabled n/acceptors (e.g NV9/NV10)
+                                    if last_event == IntEvent::DevError(BillReturnedFromEscrow) {
+                                        println!("ignoring spurious event")
+                                    } else {
+                                        println!("note slot {slot} stacked");
+                                    }
+                                }
+                                //I'm auto-applying escrow acceptance - alter if it fits yout application
+                                IntEvent::NoteEscrow(slot) => {
+                                    println!("actioning escrow on note slot {slot}");
+                                    device.action_escrow(true)?;
+                                }
+                                //this will only work with stuff like NV200, spectral's etc
+                                //cannot be triggered with n/acc's that lack the optics
+                                IntEvent::Barcode => println!("barcode detected"),
+                                IntEvent::BarcodeEscrow => {
+                                    println!("actioning escrow");
+                                    device.action_escrow(true)?;
+                                }
+                                //catachall for something went wrong (jammed, fraud, transport error, etc)
+                                IntEvent::DevError(e) => println!("event error: {:?}", e),
+                            };
+                            last_event = event;
+                        }
+                    }
                 }
-            }
+                Err(e) => {
+                    println!("error: {e}");
+                }
+            };
 
             sleep(Duration::from_millis(200));
         }
     }
-         
+
     Ok(())
     
 }
 ```
 
-Terminal Output (showing acceptance of a £10 note):
+Terminal Output: 
+1) showing device setup 
+2) showing acceptance of a £10 note 
+3) rejecting an unidentified object (barcode ticket))
 ```
-scanning 8bit addresses....
+scanning cctalk addresses....
 received addresses: [40]
 probing addr: 40
+found 16-bit device!
 device found: ITL Note Acceptor NV10
 Note Acceptor NV10 initialised! Ready for use
 
-error: InvalidBillValidation
-note_val: 10, multiplier: 100, sf: 1, dp: 100
-Accepted £10.00 note
-Total credit: £10.00
+events: [RawResult { a: 2, b: 1 }]
+actioning escrow on note slot 2
+events: [RawResult { a: 2, b: 0 }]
+note slot 2 stacked
+
+events: [RawResult { a: 0, b: 1 }, RawResult { a: 1, b: 0 }]
+event error: BillReturnedFromEscrow
+ignoring spurious event
 ```
 
 ## CCTalk Packet description
