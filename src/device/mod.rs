@@ -9,7 +9,7 @@ type DevKind = CctalkDeviceKind;
 use crate::{
     DEFAULT_TIMEOUT_MS, MASTER_ADDR,
     device::counter::{EC, ECs},
-    errors::{CctalkMessageError, CctalkTransmissionError, EventError},
+    errors::{CctalkTransmissionError, EventError},
     headers::CcTalkHeader,
     interface::SharedCctalk,
     message::{Cctalk8BitChksumMessage, CctalkCRC16ChksumMessage, CctalkMessage},
@@ -61,7 +61,7 @@ impl Default for Currancy {
     }
 }
 
-// #[allow(unused)]
+#[allow(unused)]
 impl Currancy {
     pub fn slot_to_currancy(&self, slot: u8) -> f32 {
         let note_val = self.slots[slot as usize] as f32;
@@ -556,39 +556,14 @@ where
         //
 
         //get response to event poll - if not an ack, return an error
-        match self.r#type {
-            CctalkEncStatus::Unenc8Bit => {
-                //extract the 11-byte data-packet from response and return
+        //extract the 11-byte data-packet from response and return
 
-                let res = self.header_only8(
-                    self.info.addr,
-                    CcTalkHeader::ReadBufferedBillEvents,
-                    timeout_ms,
-                )?;
-                let dat = res.data().as_slice()[0..BILL_EVENT_BUFF_LEN]
-                    .try_into()
-                    .expect("error buff events ret value not 11 bytes long");
+        let res = self.header_only(CcTalkHeader::ReadBufferedBillEvents, timeout_ms)?;
+        let dat = res.data().as_slice()[0..BILL_EVENT_BUFF_LEN]
+            .try_into()
+            .expect("error buff events ret value not 11 bytes long");
 
-                Ok(dat)
-            }
-            CctalkEncStatus::Unenc16bit => {
-                let res = self.header_only16(
-                    self.info.addr,
-                    CcTalkHeader::ReadBufferedBillEvents,
-                    timeout_ms,
-                )?;
-                let dat = res.data().as_slice()[0..BILL_EVENT_BUFF_LEN]
-                    .try_into()
-                    .expect("error buff events ret value not 11 bytes long");
-
-                Ok(dat)
-            }
-            _ => {
-                return Err(CctalkTransmissionError::CctalkMessageError(
-                    CctalkMessageError::NoChkSum,
-                ));
-            }
-        }
+        Ok(dat)
     }
 
     fn process_events(&mut self, data: [u8; BILL_EVENT_BUFF_LEN]) -> hVec<RawResult, 5> {
@@ -687,31 +662,8 @@ where
         Ok(rx_bytes)
     }
 
-    pub fn header_only16(
+    pub fn header_only(
         &mut self,
-        addr: u8,
-        header: CcTalkHeader,
-        timeout_ms: Option<u32>,
-    ) -> Result<CctalkMessage, CctalkTransmissionError>
-    where
-        D: DelayNs,
-        U: Read + Write,
-    {
-        let msg = CctalkMessage::new(CctalkEncStatus::Unenc16bit, None, addr, header, hVec::new());
-
-        let rx_bytes = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
-        let msg = CctalkMessage::from_bytes(CctalkEncStatus::Unenc16bit, rx_bytes)?;
-
-        if msg.header() != CcTalkHeader::Ack {
-            return Err(CctalkTransmissionError::CctalkFailedToAck(header));
-        };
-
-        Ok(msg)
-    }
-
-    fn header_only8(
-        &mut self,
-        addr: u8,
         header: CcTalkHeader,
         timeout_ms: Option<u32>,
     ) -> Result<CctalkMessage, CctalkTransmissionError>
@@ -720,15 +672,15 @@ where
         U: Read + Write,
     {
         let msg = CctalkMessage::new(
-            CctalkEncStatus::Unenc8Bit,
+            self.r#type.clone(),
             Some(MASTER_ADDR),
-            addr,
+            self.info.addr,
             header,
             hVec::new(),
         );
 
         let rx_bytes = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
-        let msg = CctalkMessage::from_bytes(CctalkEncStatus::Unenc8Bit, rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
 
         if msg.header() != CcTalkHeader::Ack {
             return Err(CctalkTransmissionError::CctalkFailedToAck(header));
