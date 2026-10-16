@@ -4,7 +4,7 @@ mod counter;
 pub mod uninit;
 
 type EncKey = CcTalkEncryptionKeys;
-type Chksum = CctalkEncStatus;
+// type Chksum = CctalkEncStatus;
 type DevKind = CctalkDeviceKind;
 use crate::{
     DEFAULT_TIMEOUT_MS, MASTER_ADDR,
@@ -139,7 +139,7 @@ impl InitStatus for Unprobed {}
 /* =====================================================================================
  *
  *
- *          8bit devices that have been probed, but not initialised
+ *          devices that have been probed, but not initialised
  *
  *
  * =====================================================================================
@@ -158,6 +158,8 @@ where
          *      Get currency
          *
          * */
+        // #[cfg(feature = "std")]
+        // std::println!("fetching currency");
         self.currancy = Some(self.get_currency()?);
         // println!(
         //     "currency_sf: {:?}, currency_country: {}",
@@ -181,16 +183,17 @@ where
         }
 
         let msg = CctalkMessage::new(
-            CctalkEncStatus::Unenc8Bit,
+            self.r#type.clone(),
             Some(MASTER_ADDR),
             self.info.addr,
             CcTalkHeader::ModifyBillOperatingMode,
             hVec::from_array([cmd_byte]),
         );
 
+        // #[cfg(feature = "std")]
+        // std::println!("setting bill operating mode");
         let rx_bytes = self.transfer(msg, 80)?;
-        let _msg = Cctalk8BitChksumMessage::try_from(rx_bytes)
-            .map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
+        let _msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
         // println!("mod bill op mode: {}", msg.header());
 
         /*
@@ -199,6 +202,8 @@ where
          *
          * */
 
+        // #[cfg(feature = "std")]
+        // std::println!("uninibiting all slots");
         let _header = self.inhibit_all_slots(false)?;
         // println!("uninhibited all slots, result: {}", header);
 
@@ -208,6 +213,8 @@ where
          *
          * */
 
+        // #[cfg(feature = "std")]
+        // std::println!("Unsetting master inhibit");
         let _ack = self.set_master_inhibit(false)?;
         // println!("mod master inhibit: {}", ack);
 
@@ -217,11 +224,14 @@ where
          *
          */
 
+        // #[cfg(feature = "std")]
+        // std::println!("Getting/setting event counter");
         let ec = self.get_event_counter()?;
         self.events.curr = ec;
         self.events.last = self.events.curr.clone();
 
-        // println!("Device init at addr: {} complete!\n", self.info.addr);
+        // #[cfg(feature = "std")]
+        // std::println!("Device init at addr: {} complete!\n", self.info.addr);
 
         Ok(CctalkDevice {
             info: self.info,
@@ -292,7 +302,7 @@ where
         );
 
         let rx_bytes = self.transfer(msg, 80)?;
-        let msg = CctalkMessage::msg_from_bytes(self.r#type.clone(), rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
         let data_bytes = msg.data();
 
         let ev_cnt = data_bytes[0];
@@ -313,7 +323,7 @@ where
         );
 
         let rx_bytes = self.transfer(msg, 80)?;
-        let msg = CctalkMessage::msg_from_bytes(self.r#type.clone(), rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
 
         Ok(msg.header())
     }
@@ -366,7 +376,7 @@ where
             );
 
             let rx_bytes = self.transfer(msg, 80)?;
-            let msg = CctalkMessage::msg_from_bytes(self.r#type.clone(), rx_bytes)?;
+            let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
             let dat = msg.data().clone();
             if *dat != [0, 0, 0, 0, 0, 0, 0] {
                 for (j, _) in dat.iter().enumerate() {
@@ -407,7 +417,7 @@ where
 
         let rx_bytes = self.transfer(msg, 80)?;
 
-        let msg = CctalkMessage::msg_from_bytes(self.r#type.clone(), rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
 
         for (i, dat) in msg.data().iter().enumerate() {
             currancy.sf[i] = *dat;
@@ -429,7 +439,7 @@ where
 
         match self.transfer(msg, 80) {
             Ok(bytes) => {
-                let msg = CctalkMessage::msg_from_bytes(self.r#type.clone(), bytes).ok();
+                let msg = CctalkMessage::from_bytes(self.r#type.clone(), bytes).ok();
                 if let Some(msg) = msg {
                     for (i, dat) in msg.data().iter().enumerate() {
                         currancy.rev[i] = *dat;
@@ -507,7 +517,7 @@ where
         );
 
         let res = self.transfer(msg, 20)?;
-        let res = CctalkMessage::msg_from_bytes(self.r#type.clone(), res)?;
+        let res = CctalkMessage::from_bytes(self.r#type.clone(), res)?;
 
         if !res.is_ack() {
             return Err(CctalkTransmissionError::CctalkFailedToAck(res.header()));
@@ -690,7 +700,7 @@ where
         let msg = CctalkMessage::new(CctalkEncStatus::Unenc16bit, None, addr, header, hVec::new());
 
         let rx_bytes = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
-        let msg = CctalkMessage::msg_from_bytes(CctalkEncStatus::Unenc16bit, rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(CctalkEncStatus::Unenc16bit, rx_bytes)?;
 
         if msg.header() != CcTalkHeader::Ack {
             return Err(CctalkTransmissionError::CctalkFailedToAck(header));
@@ -718,7 +728,7 @@ where
         );
 
         let rx_bytes = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
-        let msg = CctalkMessage::msg_from_bytes(CctalkEncStatus::Unenc8Bit, rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(CctalkEncStatus::Unenc8Bit, rx_bytes)?;
 
         if msg.header() != CcTalkHeader::Ack {
             return Err(CctalkTransmissionError::CctalkFailedToAck(header));
@@ -736,7 +746,7 @@ pub enum CctalkEncStatus {
     BNV,
     DES, // CctalkEncSupport(CcTalkEncryptionStatus),
 }
-
+#[allow(unused)]
 #[derive(Default, Debug, Clone)]
 pub struct CcTalkEncryptionKeys {
     proto_level: u8,
@@ -831,6 +841,8 @@ impl From<RawResult> for IntEvent {
         let a = value.a;
         let b = value.b;
 
+        //1st case if a is zero, then b is error code
+        //TODO: rework match statement below to incorporate this fact
         if a == 0 {
             return Self::DevError(EventError::from(b));
         }
@@ -844,7 +856,7 @@ impl From<RawResult> for IntEvent {
             (255, 0) => Self::Barcode,
             //barcodde/ticket slot: 255, error slot: Escrow Hold
             (255, 1) => Self::BarcodeEscrow,
-            //anything else (a must be zero and b must be an error code)
+            //anything else (b must be an error code)
             (_, _) => Self::DevError(EventError::from(b)),
         }
     }

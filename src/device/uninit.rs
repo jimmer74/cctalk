@@ -28,6 +28,8 @@ impl<U, D> CctalkDevice<Unprobed, U, D> {
         U: Read + Write,
     {
         let addr = self.info.addr;
+
+        //First determine if unecrypted 8bit or 16bit device
         if let Ok(res) = self.header_only8(self.info.addr, CcTalkHeader::SimplePoll, None) {
             #[cfg(feature = "std")]
             std::println!("found 8 bit device!");
@@ -46,6 +48,8 @@ impl<U, D> CctalkDevice<Unprobed, U, D> {
             };
         };
 
+        //TODO: rewrite so device agnostic, using a universal header_only fn that works for all
+        //devtypes
         match self.r#type {
             CctalkEncStatus::Unenc8Bit => {
                 //Device type
@@ -156,22 +160,19 @@ impl<U, D> CctalkDevice<Unprobed, U, D> {
     {
         let msg = CctalkMessage::new(
             self.r#type.clone(),
-            if self.r#type == CctalkEncStatus::Unenc8Bit {
-                Some(MASTER_ADDR)
-            } else {
-                None
-            },
+            Some(MASTER_ADDR),
             self.info.addr,
             CcTalkHeader::RequestEncryptionSupport,
             hVec::from_array(REQ_ENC_SUPPORT_BYTES),
         );
+
         match self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS)) {
             Ok(rx_bytes) => {
                 // println!("enc bytes: {:?}", rx_bytes);
                 if rx_bytes.len() == 17 {
                     //packet layout consists of 17 bytes (see struct below for
                     //layout )
-                    match CctalkMessage::msg_from_bytes(self.r#type.clone(), rx_bytes) {
+                    match CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes) {
                         Ok(msg) => {
                             let data = msg.data().as_slice();
                             return Ok(Some(CcTalkEncryptionKeys {

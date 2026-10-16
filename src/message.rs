@@ -11,6 +11,13 @@ pub enum CctalkMessage {
 }
 
 impl CctalkMessage {
+    /*=========================================================================
+     *
+     *
+     *                      Constructor functions
+     *
+     *
+     *========================================================================= */
     pub fn new(
         r#type: CctalkEncStatus,
         src: Option<u8>,
@@ -33,7 +40,7 @@ impl CctalkMessage {
         ret
     }
 
-    pub fn msg_from_bytes(
+    pub fn from_bytes(
         r#type: CctalkEncStatus,
         rx_bytes: hVec<u8, 260>,
     ) -> Result<CctalkMessage, CctalkTransmissionError> {
@@ -50,7 +57,14 @@ impl CctalkMessage {
             }
         }
     }
-
+    /*=========================================================================
+     *
+     *
+     *                  Convenience functions for transparently
+     *                  getting at underlyling struct data
+     *
+     *
+     *========================================================================= */
     pub fn data(&self) -> &hVec<u8, 255> {
         match self {
             CctalkMessage::MSG8(msg) => &msg.data,
