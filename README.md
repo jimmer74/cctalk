@@ -3,18 +3,16 @@
 Made by hand in rust. 
 
 ## Current State
-You can use this to init a note acceptor, that's using 8-bit checksums and is unencrypted currently. 
+You can use this to init a note acceptor (that's using 8-bit/16-bit checksums and is unencrypted) currently. 
 
-Then you can read the note event buffer in a 200ms loop (or else note acceptor goes back to sleep) for changes (i.e. inserted note, inserted barcode, strimming attempt, etc).
+Then you can read the note event buffer in a (at most) 200ms loop (or else note acceptor goes back to sleep) for changes in it's event buffer (i.e. inserted note, inserted barcode, strimming attempt, etc).
 
-It's all a bit proto and rough and will change massively to include:
+It's defo pre-release and will hopefully change massively to include:
 
-* 16-bit unencrypted devices
-* BNV encrypted devices
-* DES encryted devices
-* Coinmechs & hoppers
-* much better abstractions
-* more useful functions
+* BNV encrypted devices (maybe, but not priority)
+* DES encryted devices (definately)
+* Coinmechs & hoppers (definately coinmechs, not sure about hoppers)
+* Card readers (don't have a cctalk one, but will work on it if someone donates one)
 * better user experience!
 
 An example (using rpi-pal on a raspberry pi zero):
