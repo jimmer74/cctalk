@@ -1,15 +1,22 @@
-use crate::message::MessageType;
+use crate::{
+    device::{
+        currency::Currancy,
+        event::{IntEvent, RawResult},
+    },
+    message::MessageType,
+};
 use core::marker::PhantomData;
 mod counter;
+pub mod currency;
+pub mod event;
 pub mod uninit;
-
 type EncKey = CcTalkEncryptionKeys;
 // type Chksum = CctalkEncStatus;
 type DevKind = CctalkDeviceKind;
 use crate::{
     DEFAULT_TIMEOUT_MS, MASTER_ADDR,
     device::counter::{EC, ECs},
-    errors::{CctalkTransmissionError, EventError},
+    errors::CctalkTransmissionError,
     headers::CcTalkHeader,
     interface::SharedCctalk,
     message::{Cctalk8BitChksumMessage, CctalkCRC16ChksumMessage, CctalkMessage},
@@ -42,80 +49,12 @@ pub struct CctalkDevice<I, U, D> {
     _init_state: PhantomData<I>,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Currancy {
-    slots: CurrancySlots,
-    sf: ScalingFactor,
-    cc: [u8; 2],
-    rev: [u8; 256],
-}
-
-impl Default for Currancy {
-    fn default() -> Self {
-        Self {
-            slots: CurrancySlots::default(),
-            sf: ScalingFactor::default(),
-            cc: [0u8; 2],
-            rev: [0u8; 256],
-        }
-    }
-}
-
-#[allow(unused)]
-impl Currancy {
-    pub fn slot_to_currancy(&self, slot: u8) -> f32 {
-        let note_val = self.slots[slot as usize] as f32;
-        let multiplier = self.sf[0] as f32; //to get value of currency in minor units eg pence
-        let sf = (10_u32.pow(self.sf[1] as u32)) as f32; //value of currancy relative to minor unit
-        let dp = (10_u32.pow(self.sf[2] as u32)) as f32; //divisor to get final currency in terms of major
-        //units (eg pounds)
-
-        // println!(
-        //     "note_val: {}, multiplier: {}, sf: {}, dp: {} ",
-        //     note_val, multiplier, sf, dp
-        // );
-        (note_val * multiplier * sf) / dp
-    }
-
-    fn is_occupied(&self, index: usize) -> bool {
-        self.slots[index] != 0
-    }
-
-    fn num_slots(&self) -> usize {
-        let num_slots = self.slots.iter().filter(|slot| *slot != &0u8).count();
-        num_slots
-    }
-}
-
-type CurrancySlots = [u8; 16];
-type ScalingFactor = [u8; 3];
-
 #[derive(Default, Debug, Clone)]
 pub enum CctalkDeviceCRC {
     Crc16xmodem,
     #[default]
     Simple8bit,
 }
-
-//Encryption
-pub trait EncStatus {}
-
-#[derive(Default, Debug)]
-pub struct NoChksum;
-#[derive(Default, Debug)]
-pub struct Unenc8Bit;
-#[derive(Default, Debug)]
-pub struct Unenc16Bit;
-#[derive(Default, Debug)]
-pub struct Bnv16Bit;
-#[derive(Default, Debug)]
-pub struct Des16Bit;
-
-impl EncStatus for NoChksum {}
-impl EncStatus for Unenc8Bit {}
-impl EncStatus for Unenc16Bit {}
-impl EncStatus for Bnv16Bit {}
-impl EncStatus for Des16Bit {}
 
 //Initialisation state
 pub trait InitStatus {}
@@ -183,7 +122,7 @@ where
         }
 
         let msg = CctalkMessage::new(
-            self.r#type.clone(),
+            self.r#type,
             Some(MASTER_ADDR),
             self.info.addr,
             CcTalkHeader::ModifyBillOperatingMode,
@@ -193,7 +132,7 @@ where
         // #[cfg(feature = "std")]
         // std::println!("setting bill operating mode");
         let rx_bytes = self.transfer(msg, 80)?;
-        let _msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
+        let _msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
         // println!("mod bill op mode: {}", msg.header());
 
         /*
@@ -261,7 +200,7 @@ where
             None
         };
         let msg = CctalkMessage::new(
-            self.r#type.clone(),
+            self.r#type,
             src,
             self.info.addr,
             CcTalkHeader::ModifyMasterInhibitStatus,
@@ -294,7 +233,7 @@ where
         let payload = hVec::new();
         let own_addr = self.get_own_addr();
         let msg = CctalkMessage::new(
-            self.r#type.clone(),
+            self.r#type,
             own_addr,
             self.info.addr,
             CcTalkHeader::ReadBufferedBillEvents,
@@ -302,7 +241,7 @@ where
         );
 
         let rx_bytes = self.transfer(msg, 80)?;
-        let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
         let data_bytes = msg.data();
 
         let ev_cnt = data_bytes[0];
@@ -315,7 +254,7 @@ where
 
         let payload: hVec<u8, 255> = hVec::from_array(tx_array);
         let msg = CctalkMessage::new(
-            self.r#type.clone(),
+            self.r#type,
             Some(MASTER_ADDR),
             self.info.addr,
             CcTalkHeader::ModifyInhibitStatus,
@@ -323,36 +262,40 @@ where
         );
 
         let rx_bytes = self.transfer(msg, 80)?;
-        let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
 
         Ok(msg.header())
     }
 
-    // #[allow(unused)]
-    // fn uninhibit_slots(&mut self, slots: &[u8]) -> Result<CcTalkHeader, CctalkTransmissionError> {
-    //     let mut tx_u16 = 0u16;
-    //
-    //     for (i, _) in slots.iter().enumerate() {
-    //         tx_u16 |= 1 << i;
-    //     }
-    //
-    //     let tx_array: [u8; 2] = [(tx_u16 >> 8) as u8, (tx_u16 & 0xFF) as u8];
-    //
-    //     let payload: hVec<u8, 255> = hVec::from_array(tx_array);
-    //     let msg = Msg8::new(
-    //         self.info.addr,
-    //         MASTER_ADDR,
-    //         CcTalkHeader::ModifyInhibitStatus,
-    //         payload,
-    //     );
-    //
-    //     let rx_bytes = self.transfer(msg, 80)?;
-    //     let msg =
-    //         Msg8::try_from(rx_bytes).map_err(|e| CctalkTransmissionError::CctalkMessageError(e))?;
-    //
-    //     // println!("mod slots {:#b} uninhibited: {}", tx_u16, msg.header());
-    //     Ok(msg.header())
-    // }
+    //WARN: This doesn't work for initialisation. Note acceptor (NV9/10) won't go into
+    //acceptance mode unless all slots are uninhibited - whether used or not!
+
+    #[allow(unused)]
+    fn uninhibit_slots(&mut self, slots: &[u8]) -> Result<CcTalkHeader, CctalkTransmissionError> {
+        let mut tx_u16 = 0u16;
+
+        for (i, _) in slots.iter().enumerate() {
+            tx_u16 |= 1 << i;
+        }
+
+        let tx_array: [u8; 2] = [(tx_u16 >> 8) as u8, (tx_u16 & 0xFF) as u8];
+
+        let payload: hVec<u8, 255> = hVec::from_array(tx_array);
+        let msg = CctalkMessage::new(
+            self.r#type,
+            Some(MASTER_ADDR),
+            self.info.addr,
+            CcTalkHeader::ModifyInhibitStatus,
+            payload,
+        );
+
+        let rx_bytes = self.transfer(msg, 80)?;
+        let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
+
+        // println!("mod slots {:#b} uninhibited: {}", tx_u16, msg.header());
+        Ok(msg.header())
+    }
+
     fn get_currency(&mut self) -> Result<Currancy, CctalkTransmissionError> {
         let mut currancy = Currancy::default();
         let mut country_code: [u8; 2] = [0u8; 2];
@@ -368,7 +311,7 @@ where
             _ = payload.push(i);
 
             let msg = CctalkMessage::new(
-                self.r#type.clone(),
+                self.r#type,
                 Some(MASTER_ADDR),
                 self.info.addr,
                 CcTalkHeader::RequestBillId,
@@ -376,7 +319,7 @@ where
             );
 
             let rx_bytes = self.transfer(msg, 80)?;
-            let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
+            let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
             let dat = msg.data().clone();
             if *dat != [0, 0, 0, 0, 0, 0, 0] {
                 for (j, _) in dat.iter().enumerate() {
@@ -408,7 +351,7 @@ where
 
         let payload: hVec<u8, 255> = hVec::from_array(country_code);
         let msg = CctalkMessage::new(
-            self.r#type.clone(),
+            self.r#type,
             Some(MASTER_ADDR),
             self.info.addr,
             CcTalkHeader::RequestCountryScalingFactor,
@@ -417,7 +360,7 @@ where
 
         let rx_bytes = self.transfer(msg, 80)?;
 
-        let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
 
         for (i, dat) in msg.data().iter().enumerate() {
             currancy.sf[i] = *dat;
@@ -430,7 +373,7 @@ where
          * */
         let payload: hVec<u8, 255> = hVec::new();
         let msg = CctalkMessage::new(
-            self.r#type.clone(),
+            self.r#type,
             Some(MASTER_ADDR),
             self.info.addr,
             CcTalkHeader::RequestCurrencyRevision,
@@ -439,7 +382,7 @@ where
 
         match self.transfer(msg, 80) {
             Ok(bytes) => {
-                let msg = CctalkMessage::from_bytes(self.r#type.clone(), bytes).ok();
+                let msg = CctalkMessage::from_bytes(self.r#type, bytes).ok();
                 if let Some(msg) = msg {
                     for (i, dat) in msg.data().iter().enumerate() {
                         currancy.rev[i] = *dat;
@@ -509,7 +452,7 @@ where
         }
 
         let msg = CctalkMessage::new(
-            self.r#type.clone(),
+            self.r#type,
             Some(MASTER_ADDR),
             self.info.addr,
             CcTalkHeader::RouteBill,
@@ -517,7 +460,7 @@ where
         );
 
         let res = self.transfer(msg, 20)?;
-        let res = CctalkMessage::from_bytes(self.r#type.clone(), res)?;
+        let res = CctalkMessage::from_bytes(self.r#type, res)?;
 
         if !res.is_ack() {
             return Err(CctalkTransmissionError::CctalkFailedToAck(res.header()));
@@ -672,7 +615,7 @@ where
         U: Read + Write,
     {
         let msg = CctalkMessage::new(
-            self.r#type.clone(),
+            self.r#type,
             Some(MASTER_ADDR),
             self.info.addr,
             header,
@@ -680,7 +623,7 @@ where
         );
 
         let rx_bytes = self.transfer(msg, timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS))?;
-        let msg = CctalkMessage::from_bytes(self.r#type.clone(), rx_bytes)?;
+        let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
 
         if msg.header() != CcTalkHeader::Ack {
             return Err(CctalkTransmissionError::CctalkFailedToAck(header));
@@ -689,7 +632,7 @@ where
         Ok(msg)
     }
 }
-#[derive(Default, Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum CctalkEncStatus {
     #[default]
     UnInit,
@@ -757,79 +700,6 @@ impl From<u8> for CctalkDeviceKind {
             110 => Self::TicketPrinter,
             _ => Self::Unknown,
         }
-    }
-}
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub enum IntEvent {
-    StackedNote(u8),
-    NoteEscrow(u8),
-    Barcode,
-    BarcodeEscrow,
-    DevError(EventError),
-}
-
-impl Default for IntEvent {
-    fn default() -> Self {
-        Self::DevError(EventError::UnknownError)
-    }
-}
-
-/*
- *
- * Slightly complicated schema:
- *
- *
- * (a,b) => (0,20) Barcode Detected
- * (a,b) => (255, 1) Ticket held in escrow
- * (a,b) (1..=254, 0) Note Accepted (a is note slot number (need to look up in currency table))
- * (a,b) => (1..=254, 1) Note held in Escrow
- * (a,b) => (0, 1..=21) Error Codes Various
- *
- *
- * */
-
-impl From<RawResult> for IntEvent {
-    fn from(value: RawResult) -> Self {
-        let a = value.a;
-        let b = value.b;
-
-        //1st case if a is zero, then b is error code
-        //TODO: rework match statement below to incorporate this fact
-        if a == 0 {
-            return Self::DevError(EventError::from(b));
-        }
-
-        match (a, b) {
-            //note slot 1->254, error slot: Escrow Hold
-            (1..255, 1) => Self::NoteEscrow(a),
-            //note slot 1->254, error slot: Note stacked/Accepted
-            (1..255, 0) => Self::StackedNote(a),
-            //barcode/ticket slot 255, error slot: Ticket stacked/Accepted
-            (255, 0) => Self::Barcode,
-            //barcodde/ticket slot: 255, error slot: Escrow Hold
-            (255, 1) => Self::BarcodeEscrow,
-            //anything else (b must be an error code)
-            (_, _) => Self::DevError(EventError::from(b)),
-        }
-    }
-}
-
-#[derive(Default, Debug)]
-struct RawResult {
-    #[allow(unused)]
-    a: u8,
-    b: u8,
-}
-
-impl RawResult {
-    #[allow(unused)]
-    fn new(a: u8, b: u8) -> Self {
-        Self { a, b }
-    }
-
-    #[allow(unused)]
-    fn is_escrow(&self) -> bool {
-        self.b == 1
     }
 }
 
