@@ -18,3 +18,4 @@ thiserror = { version = "2.0.20", default-features = false } #no_std compat
 
 [features]
 std = []
+debug = [ "std" ]

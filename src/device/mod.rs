@@ -41,7 +41,7 @@ pub struct DevInfo {
 pub struct CctalkDevice<I, U, D> {
     pub info: DevInfo,
     cctalk: SharedCctalk<U, D>,
-    currancy: Option<Currancy>,
+    pub currancy: Option<Currancy>,
     r#type: CctalkEncStatus,
     encrypted: Option<EncKey>,
     events: ECs,
@@ -97,54 +97,64 @@ where
          *      Get currency
          *
          * */
-        // #[cfg(feature = "std")]
-        // std::println!("fetching currency");
+        #[cfg(feature = "std")]
+        std::println!("fetching currency");
         self.currancy = Some(self.get_currency()?);
-        // println!(
-        //     "currency_sf: {:?}, currency_country: {}",
-        //     self.currancy.unwrap().sf,
-        //     String::from_utf8_lossy(&self.currancy.unwrap().cc)
-        // );
-
-        /*
-         *
-         *      Modify Bill Operating Mode
-         *
-         * */
-
-        let mut cmd_byte = 0x00;
-
-        if self.info.model == hString::<255>::try_from("NV9").unwrap() {
-            cmd_byte |= 0b00000001;
-        }
-        if escrow {
-            cmd_byte |= 1 << 1;
-        }
-
-        let msg = CctalkMessage::new(
-            self.r#type,
-            Some(MASTER_ADDR),
-            self.info.addr,
-            CcTalkHeader::ModifyBillOperatingMode,
-            hVec::from_array([cmd_byte]),
+        #[cfg(feature = "std")]
+        std::println!(
+            "currency_sf: {:?}, currency_country: {}",
+            self.currancy.unwrap().sf,
+            std::string::String::from_utf8_lossy(&self.currancy.unwrap().cc)
         );
 
-        // #[cfg(feature = "std")]
-        // std::println!("setting bill operating mode");
-        let rx_bytes = self.transfer(msg, 80)?;
-        let _msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
-        // println!("mod bill op mode: {}", msg.header());
+        /* =================================================
+         *
+         *          ONLY FOR NOTE ACCEPTORS!!!
+         *          enable escrow, unihibit all slots
+         *
+         * =================================================*/
+        if self.info.kind == DevKind::NoteAcceptor {
+            /*
+             *
+             *      Modify Bill Operating Mode
+             *
+             * */
 
+            let mut cmd_byte = 0x00;
+
+            if self.info.model == hString::<255>::try_from("NV9").unwrap() {
+                cmd_byte |= 0b00000001;
+            }
+            if escrow {
+                cmd_byte |= 1 << 1;
+            }
+
+            let msg = CctalkMessage::new(
+                self.r#type,
+                Some(MASTER_ADDR),
+                self.info.addr,
+                CcTalkHeader::ModifyBillOperatingMode,
+                hVec::from_array([cmd_byte]),
+            );
+
+            #[cfg(feature = "std")]
+            std::println!("setting bill operating mode");
+            let rx_bytes = self.transfer(msg, 80)?;
+            let _msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
+            #[cfg(feature = "std")]
+            std::println!("mod bill op mode: {}", _msg.header());
+        }
         /*
          *
          *      Modify Inhibit Status for all (occupied) slots
          *
          * */
 
-        // #[cfg(feature = "std")]
-        // std::println!("uninibiting all slots");
+        #[cfg(feature = "std")]
+        std::println!("uninibiting all slots");
         let _header = self.inhibit_all_slots(false)?;
-        // println!("uninhibited all slots, result: {}", header);
+        #[cfg(feature = "std")]
+        std::println!("uninhibited all slots, result: {}", _header);
 
         /*
          *
@@ -152,10 +162,11 @@ where
          *
          * */
 
-        // #[cfg(feature = "std")]
-        // std::println!("Unsetting master inhibit");
+        #[cfg(feature = "std")]
+        std::println!("Unsetting master inhibit");
         let _ack = self.set_master_inhibit(false)?;
-        // println!("mod master inhibit: {}", ack);
+        #[cfg(feature = "std")]
+        std::println!("mod master inhibit: {}", _ack);
 
         /*
          *
@@ -163,14 +174,14 @@ where
          *
          */
 
-        // #[cfg(feature = "std")]
-        // std::println!("Getting/setting event counter");
+        #[cfg(feature = "std")]
+        std::println!("Getting/setting event counter");
         let ec = self.get_event_counter()?;
         self.events.curr = ec;
         self.events.last = self.events.curr.clone();
 
-        // #[cfg(feature = "std")]
-        // std::println!("Device init at addr: {} complete!\n", self.info.addr);
+        #[cfg(feature = "std")]
+        std::println!("Device init at addr: {} complete!\n", self.info.addr);
 
         Ok(CctalkDevice {
             info: self.info,
@@ -232,13 +243,12 @@ where
     fn get_event_counter(&mut self) -> Result<EC, CctalkTransmissionError> {
         let payload = hVec::new();
         let own_addr = self.get_own_addr();
-        let msg = CctalkMessage::new(
-            self.r#type,
-            own_addr,
-            self.info.addr,
-            CcTalkHeader::ReadBufferedBillEvents,
-            payload,
-        );
+
+        let header = match self.info.kind {
+            CctalkDeviceKind::Coinmech => CcTalkHeader::ReadBufferedCreditOrError,
+            _ => CcTalkHeader::ReadBufferedBillEvents,
+        };
+        let msg = CctalkMessage::new(self.r#type, own_addr, self.info.addr, header, payload);
 
         let rx_bytes = self.transfer(msg, 80)?;
         let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
@@ -298,8 +308,6 @@ where
 
     fn get_currency(&mut self) -> Result<Currancy, CctalkTransmissionError> {
         let mut currancy = Currancy::default();
-        let mut country_code: [u8; 2] = [0u8; 2];
-        let mut slot_amt: [u8; 4] = [0u8; 4];
 
         /*
          *
@@ -309,95 +317,155 @@ where
         for i in 1..=16 {
             let mut payload: hVec<u8, 255> = hVec::new();
             _ = payload.push(i);
-
+            let header = match self.info.kind {
+                CctalkDeviceKind::Coinmech => CcTalkHeader::RequestCoinId,
+                _ => CcTalkHeader::RequestBillId,
+            };
             let msg = CctalkMessage::new(
                 self.r#type,
                 Some(MASTER_ADDR),
                 self.info.addr,
-                CcTalkHeader::RequestBillId,
+                header,
                 payload,
             );
 
             let rx_bytes = self.transfer(msg, 80)?;
             let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
             let dat = msg.data().clone();
-            if *dat != [0, 0, 0, 0, 0, 0, 0] {
-                for (j, _) in dat.iter().enumerate() {
-                    if j < 2 {
-                        country_code[j] = dat[j];
-                    } else if j >= 2 && j < 6 {
-                        slot_amt[j - 2] = dat[j];
-                    }
-                }
 
-                let slot_str = unsafe {
-                    hString::<255>::from_utf8_unchecked(hVec::from_slice(&slot_amt[..]).unwrap()) //ugly!
-                };
-                // println!("slot_str: {}", slot_str);
-                let slot_amt: u16 = slot_str.parse().unwrap();
-                // println!("slot_data: {:?}, slot_amt: £{}", dat, slot_amt);
-                currancy.slots[i as usize] = slot_amt as u8;
+            // #[cfg(feature = "std")]
+            // std::println!(
+            //     "coin id str: {}",
+            //     hString::<255>::from_utf8(dat.clone()).unwrap()
+            // );
+
+            let mut new_dat: hVec<u8, 6> = hVec::new();
+            for (pos, byte) in dat.iter().enumerate() {
+                if pos <= new_dat.len() {
+                    _ = new_dat.push(*byte);
+                }
+            }
+
+            //if all coin_id data is same i.e [0,0,0,0,0,0] or [ . . . . . .]
+            //then note/coin slot is empty, so needs to be ignored.
+            //this clunky one-liner checks if vec's elements are not all the same
+            //before processing slot as currency
+
+            if let Some((slot_amt, country_code)) = process_coin_array(dat.as_slice()) {
+                currancy.slots[i as usize] = slot_amt;
+
                 if currancy.cc == [0x00, 0x00] {
                     currancy.cc = country_code;
                 }
-            }
+            };
         }
 
-        /*
+        /* ====================================================
          *
          *      Request Country Scaling Factor
+         *      /Currancy Revision
          *
-         * */
-
-        let payload: hVec<u8, 255> = hVec::from_array(country_code);
-        let msg = CctalkMessage::new(
-            self.r#type,
-            Some(MASTER_ADDR),
-            self.info.addr,
-            CcTalkHeader::RequestCountryScalingFactor,
-            payload,
-        );
-
-        let rx_bytes = self.transfer(msg, 80)?;
-
-        let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
-
-        for (i, dat) in msg.data().iter().enumerate() {
-            currancy.sf[i] = *dat;
-        }
-
-        /*
+         *      (only for note acceptors)
          *
-         *      Request Currency Revision
-         *
-         * */
-        let payload: hVec<u8, 255> = hVec::new();
-        let msg = CctalkMessage::new(
-            self.r#type,
-            Some(MASTER_ADDR),
-            self.info.addr,
-            CcTalkHeader::RequestCurrencyRevision,
-            payload,
-        );
+         * ===================================================*/
+        if self.info.kind == CctalkDeviceKind::NoteAcceptor {
+            #[cfg(feature = "std")]
+            std::println!("getting country scaling factor");
 
-        match self.transfer(msg, 80) {
-            Ok(bytes) => {
-                let msg = CctalkMessage::from_bytes(self.r#type, bytes).ok();
-                if let Some(msg) = msg {
-                    for (i, dat) in msg.data().iter().enumerate() {
-                        currancy.rev[i] = *dat;
+            let payload: hVec<u8, 255> = hVec::from_array(currancy.cc);
+            let msg = CctalkMessage::new(
+                self.r#type,
+                Some(MASTER_ADDR),
+                self.info.addr,
+                CcTalkHeader::RequestCountryScalingFactor,
+                payload,
+            );
+
+            let rx_bytes = self.transfer(msg, 80)?;
+
+            let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
+
+            for (i, dat) in msg.data().iter().enumerate() {
+                currancy.sf[i] = *dat;
+            }
+            #[cfg(feature = "std")]
+            std::println!("country scaling factor: {:?}", currancy.sf);
+
+            /*
+             *
+             *      Request Currency Revision
+             *
+             * */
+            let payload: hVec<u8, 255> = hVec::new();
+            let msg = CctalkMessage::new(
+                self.r#type,
+                Some(MASTER_ADDR),
+                self.info.addr,
+                CcTalkHeader::RequestCurrencyRevision,
+                payload,
+            );
+
+            match self.transfer(msg, 80) {
+                Ok(bytes) => {
+                    let msg = CctalkMessage::from_bytes(self.r#type, bytes).ok();
+                    if let Some(msg) = msg {
+                        for (i, dat) in msg.data().iter().enumerate() {
+                            currancy.rev[i] = *dat;
+                        }
                     }
                 }
+                Err(_e) => {
+                    // println!("error curr revision: {}", e)
+                }
             }
-            Err(_e) => {
-                // println!("error curr revision: {}", e)
-            }
-        }
+        } else {
+            //for coins we are alreay in pence/base unit.
+            //
+            //to get value of currency in minor units eg pence
+            // multiplier = sf[0]
+            //value of currancy relative to minor unit
+            // let sf = 10^sf[1];
+            //divisor to get final currency in terms of major units (eg pounds)
+            // dp = 10^sf[2]
 
+            // Therefore for coins
+            // val in major = (val in minor * multiplier * sf) / dp
+            // or [2, 0, 1]
+            // val in major = (val in minor * 1 * 1) / 100
+            //              = val_in_minor/100
+            currancy.sf = [2, 0, 1]
+        }
         Ok(currancy)
     }
 }
-/* =====================================================================================
+fn process_coin_array(dat: &[u8]) -> Option<(u8, [u8; 2])> {
+    let mut slot_amt: hVec<u8, 6> = hVec::new();
+    let mut country_code: [u8; 2] = [0x00, 0x00];
+    for (j, byte) in dat.iter().enumerate() {
+        if j < 2 {
+            country_code[j] = dat[j];
+        }
+
+        if byte.is_ascii_digit() {
+            _ = slot_amt.push(*byte);
+        }
+    }
+    let slot_str = hString::<6>::from_utf8(slot_amt).unwrap();
+    let cc_str = hString::<255>::from_utf8(hVec::from_array(country_code)).unwrap();
+
+    match slot_str.parse::<u16>() {
+        Ok(slot_amt) => {
+            #[cfg(feature = "std")]
+            {
+                std::println!("slot_str: {}", slot_str);
+                std::println!("country_code: {}", cc_str);
+                std::println!("slot_data: {:?}, slot_amt: {}", dat, slot_amt);
+            }
+            Some((slot_amt as u8, country_code))
+        }
+        Err(_) => None,
+    }
+} /* =====================================================================================
  *
  *
  *                  Only for initialised devices
@@ -501,7 +569,12 @@ where
         //get response to event poll - if not an ack, return an error
         //extract the 11-byte data-packet from response and return
 
-        let res = self.header_only(CcTalkHeader::ReadBufferedBillEvents, timeout_ms)?;
+        let header = match self.info.kind {
+            CctalkDeviceKind::Coinmech => CcTalkHeader::ReadBufferedCreditOrError,
+            _ => CcTalkHeader::ReadBufferedBillEvents,
+        };
+
+        let res = self.header_only(header, timeout_ms)?;
         let dat = res.data().as_slice()[0..BILL_EVENT_BUFF_LEN]
             .try_into()
             .expect("error buff events ret value not 11 bytes long");

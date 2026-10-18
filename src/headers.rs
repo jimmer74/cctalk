@@ -34,7 +34,6 @@ pub enum CcTalkHeader {
     RequestCountryScalingFactor = 156,
     RequestBillId = 157,
     ModifyBillId = 158,
-    // RequestBillAcceptorSystemStatus = 159,
     ReadBufferedBillEvents = 159,
     RequestCipherKey = 160,
     ClearCommsStatusBlock = 161,
@@ -59,6 +58,7 @@ pub enum CcTalkHeader {
     RequestReadyStatus = 181,
     DownloadCalibrationData = 182,
     RequestAsicStatus = 183,
+    RequestCoinId = 184,
     ModifyRoutingStatus = 185,
     RequestRoutingStatus = 186,
     ModifyRejectionThresholds = 187,
@@ -236,6 +236,7 @@ impl core::fmt::Display for CcTalkHeader {
             CcTalkHeader::SimplePoll => "Simple Poll",
             CcTalkHeader::FactoryReserved => "Factory Reserved",
             CcTalkHeader::RequestEncryptionSupport => "Request Encryption Support",
+            CcTalkHeader::RequestCoinId => "Request Coin Id",
             _ => "Error: Unknown Header",
         };
 
@@ -303,6 +304,7 @@ impl From<u8> for CcTalkHeader {
             181 => CcTalkHeader::RequestReadyStatus,
             182 => CcTalkHeader::DownloadCalibrationData,
             183 => CcTalkHeader::RequestAsicStatus,
+            184 => CcTalkHeader::RequestCoinId,
             185 => CcTalkHeader::ModifyRoutingStatus,
             186 => CcTalkHeader::RequestRoutingStatus,
             187 => CcTalkHeader::ModifyRejectionThresholds,

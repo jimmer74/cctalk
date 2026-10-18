@@ -33,6 +33,8 @@ impl Currancy {
         //     "note_val: {}, multiplier: {}, sf: {}, dp: {} ",
         //     note_val, multiplier, sf, dp
         // );
+        //
+        // for coins [0,0,1]
         (note_val * multiplier * sf) / dp
     }
 

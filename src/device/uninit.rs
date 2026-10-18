@@ -61,10 +61,15 @@ impl<U, D> CctalkDevice<Unprobed, U, D> {
         }
 
         //Encryption Key/Status
+        #[cfg(feature = "std")]
+        std::println!("fetching encryption information");
         let encrypted = match self.retrieve_enc_key(Some(200)) {
             Ok(val) => val,
             Err(_e) => None,
         };
+
+        #[cfg(feature = "std")]
+        std::println!("info: {:?}", encrypted);
 
         //Manufacturer
         res = self.header_only(CcTalkHeader::RequestManufacturerId, None)?;

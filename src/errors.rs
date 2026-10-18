@@ -89,6 +89,8 @@ pub enum EventError {
     BarcodeDetected = 20,
     #[error("UnknownBillStacked")]
     UnknownBillStacked = 21,
+    #[error("InhibitedCoinType3")]
+    InhibitedCoinType3 = 130,
     #[error("UnknownError")]
     UnknownError = 22,
 }
@@ -118,6 +120,7 @@ impl From<u8> for EventError {
             19 => Self::AntiStringMechFaulty,
             20 => Self::BarcodeDetected,
             21 => Self::UnknownBillStacked,
+            130 => Self::InhibitedCoinType3,
             _ => Self::UnknownError,
         }
     }
