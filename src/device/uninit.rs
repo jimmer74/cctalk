@@ -3,7 +3,7 @@ use crate::errors::CctalkMessageError;
 use super::*;
 
 impl<U, D> CctalkDevice<Unprobed, U, D> {
-    pub fn new(addr: u8, cctalk: SharedCctalk<U, D>) -> CctalkDevice<Unprobed, U, D>
+    pub fn new(addr: u8, cctalk: CctalkDriver<U, D>) -> CctalkDevice<Unprobed, U, D>
     where
         U: Read + Write,
         D: DelayNs,
@@ -31,16 +31,16 @@ impl<U, D> CctalkDevice<Unprobed, U, D> {
 
         //First determine if unecrypted 8bit or 16bit device
         if let Ok(_res) = self.simp_poll_8(None) {
-            #[cfg(feature = "std")]
+            #[cfg(feature = "debug")]
             std::println!("found 8 bit device!");
             self.r#type = CctalkEncStatus::Unenc8Bit;
         } else {
             if let Ok(_res) = self.simp_poll_16(None) {
-                #[cfg(feature = "std")]
+                #[cfg(feature = "debug")]
                 std::println!("found 16-bit device!");
                 self.r#type = CctalkEncStatus::Unenc16bit;
             } else {
-                #[cfg(feature = "std")]
+                #[cfg(feature = "debug")]
                 std::println!("Unable to ascertain device chksum type!");
                 return Err(CctalkTransmissionError::CctalkMessageError(
                     CctalkMessageError::NoChkSum,
@@ -61,14 +61,14 @@ impl<U, D> CctalkDevice<Unprobed, U, D> {
         }
 
         //Encryption Key/Status
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("fetching encryption information");
         let encrypted = match self.retrieve_enc_key(Some(200)) {
             Ok(val) => val,
             Err(_e) => None,
         };
 
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("info: {:?}", encrypted);
 
         //Manufacturer

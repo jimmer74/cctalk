@@ -18,7 +18,7 @@ use crate::{
     device::counter::{EC, ECs},
     errors::CctalkTransmissionError,
     headers::CcTalkHeader,
-    interface::SharedCctalk,
+    interface::CctalkDriver,
     message::{Cctalk8BitChksumMessage, CctalkCRC16ChksumMessage, CctalkMessage},
 };
 use embedded_hal::delay::DelayNs;
@@ -40,7 +40,7 @@ pub struct DevInfo {
 #[derive(Debug)]
 pub struct CctalkDevice<I, U, D> {
     pub info: DevInfo,
-    cctalk: SharedCctalk<U, D>,
+    cctalk: CctalkDriver<U, D>,
     pub currancy: Option<Currancy>,
     r#type: CctalkEncStatus,
     encrypted: Option<EncKey>,
@@ -49,11 +49,18 @@ pub struct CctalkDevice<I, U, D> {
     _init_state: PhantomData<I>,
 }
 
-#[derive(Default, Debug, Clone)]
-pub enum CctalkDeviceCRC {
-    Crc16xmodem,
-    #[default]
-    Simple8bit,
+impl<I, U, D> Clone for CctalkDevice<I, U, D> {
+    fn clone(&self) -> Self {
+        Self {
+            info: self.info.clone(),
+            cctalk: self.cctalk.clone(),
+            currancy: self.currancy,
+            r#type: self.r#type,
+            encrypted: self.encrypted.clone(),
+            events: self.events.clone(),
+            _init_state: PhantomData,
+        }
+    }
 }
 
 //Initialisation state
@@ -63,7 +70,7 @@ pub trait InitStatus {}
 pub struct Unprobed;
 #[derive(Default, Debug)]
 pub struct UnInit;
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct Init;
 
 impl InitStatus for Init {}
@@ -97,10 +104,10 @@ where
          *      Get currency
          *
          * */
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("fetching currency");
         self.currancy = Some(self.get_currency()?);
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!(
             "currency_sf: {:?}, currency_country: {}",
             self.currancy.unwrap().sf,
@@ -137,23 +144,24 @@ where
                 hVec::from_array([cmd_byte]),
             );
 
-            #[cfg(feature = "std")]
+            #[cfg(feature = "debug")]
             std::println!("setting bill operating mode");
             let rx_bytes = self.transfer(msg, 80)?;
             let _msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
-            #[cfg(feature = "std")]
+            #[cfg(feature = "debug")]
             std::println!("mod bill op mode: {}", _msg.header());
         }
+
         /*
          *
          *      Modify Inhibit Status for all (occupied) slots
          *
          * */
 
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("uninibiting all slots");
         let _header = self.inhibit_all_slots(false)?;
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("uninhibited all slots, result: {}", _header);
 
         /*
@@ -162,10 +170,10 @@ where
          *
          * */
 
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("Unsetting master inhibit");
         let _ack = self.set_master_inhibit(false)?;
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("mod master inhibit: {}", _ack);
 
         /*
@@ -174,13 +182,13 @@ where
          *
          */
 
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("Getting/setting event counter");
         let ec = self.get_event_counter()?;
         self.events.curr = ec;
         self.events.last = self.events.curr.clone();
 
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("Device init at addr: {} complete!\n", self.info.addr);
 
         Ok(CctalkDevice {
@@ -333,7 +341,7 @@ where
             let msg = CctalkMessage::from_bytes(self.r#type, rx_bytes)?;
             let dat = msg.data().clone();
 
-            // #[cfg(feature = "std")]
+            // #[cfg(feature = "debug")]
             // std::println!(
             //     "coin id str: {}",
             //     hString::<255>::from_utf8(dat.clone()).unwrap()
@@ -369,7 +377,7 @@ where
          *
          * ===================================================*/
         if self.info.kind == CctalkDeviceKind::NoteAcceptor {
-            #[cfg(feature = "std")]
+            #[cfg(feature = "debug")]
             std::println!("getting country scaling factor");
 
             let payload: hVec<u8, 255> = hVec::from_array(currancy.cc);
@@ -388,7 +396,7 @@ where
             for (i, dat) in msg.data().iter().enumerate() {
                 currancy.sf[i] = *dat;
             }
-            #[cfg(feature = "std")]
+            #[cfg(feature = "debug")]
             std::println!("country scaling factor: {:?}", currancy.sf);
 
             /*
@@ -450,13 +458,14 @@ fn process_coin_array(dat: &[u8]) -> Option<(u8, [u8; 2])> {
             _ = slot_amt.push(*byte);
         }
     }
+
     let slot_str = hString::<6>::from_utf8(slot_amt).unwrap();
-    let cc_str = hString::<255>::from_utf8(hVec::from_array(country_code)).unwrap();
 
     match slot_str.parse::<u16>() {
         Ok(slot_amt) => {
-            #[cfg(feature = "std")]
+            #[cfg(feature = "debug")]
             {
+                let cc_str = hString::<255>::from_utf8(hVec::from_array(country_code)).unwrap();
                 std::println!("slot_str: {}", slot_str);
                 std::println!("country_code: {}", cc_str);
                 std::println!("slot_data: {:?}, slot_amt: {}", dat, slot_amt);
@@ -615,7 +624,7 @@ where
             //we have one less event to process so increase last event counter
             self.events.last.increase();
         }
-        #[cfg(feature = "std")]
+        #[cfg(feature = "debug")]
         std::println!("events: {:?}", events);
         events
     }
@@ -635,7 +644,7 @@ where
         let events = self.process_events(event_buf);
 
         //for debugging purposes
-        // #[cfg(feature = "std")]
+        // #[cfg(feature = "debug")]
         // if !events.is_empty() {
         //     std::println!("{:?}", events);
         // }
@@ -654,12 +663,11 @@ where
         timeout_ms: u32,
     ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let bytes = bytes.into();
-        let mut cctalk = self.cctalk.lock();
 
-        _ = cctalk.write_bytes(bytes.clone())?;
+        _ = self.cctalk.write_bytes(bytes.clone())?;
 
-        if cctalk.echo {
-            match cctalk.read_bytes_exact(timeout_ms, bytes.len()) {
+        if self.cctalk.echo {
+            match self.cctalk.read_bytes_exact(timeout_ms, bytes.len()) {
                 Ok(rx_bytes) => {
                     if rx_bytes != bytes {
                         // println!("echo does not match");
@@ -673,7 +681,7 @@ where
             }
         }
 
-        let rx_bytes = cctalk.read_bytes(timeout_ms)?;
+        let rx_bytes = self.cctalk.read_bytes(timeout_ms)?;
 
         Ok(rx_bytes)
     }

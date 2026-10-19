@@ -18,75 +18,97 @@ It's defo pre-release and will hopefully change massively to include:
 An example (using rpi-pal on a raspberry pi zero):
 
 ```
-use cctalk::{device::CctalkDevice, interface::SharedCctalk};
-use rpi_pal::uart::Uart;
-use std::thread::sleep;
+use cctalk::{
+    device::{CctalkDevice, Init, event::IntEvent},
+    errors::EventError::BillReturnedFromEscrow,
+    interface::CctalkDriver,
+};
+use rpi_pal::{hal::Delay, uart::Uart};
+use std::{time::Duration, thread::sleep, error::Error, sync::LazyLock};
 
 const ADDR_SCAN_PAUSE: Duration = Duration::from_millis(1250);
 const ADDR_SCAN_TIMEOUT: u32 = 200_u32;
 
+static CCTALK: LazyLock<CctalkDriver<Uart, Delay>> = LazyLock::new(|| {
+    use spin::Mutex;
+    extern crate alloc;
+    use alloc::sync::Arc;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    
     let mut uart = Uart::new(9600, rpi_pal::uart::Parity::None, 8, 1).unwrap();
     let _ = uart.set_software_flow_control(false);
     let _ = uart.set_hardware_flow_control(false);
     let _ = uart.set_write_mode(true);
-    let delay = rpi_pal::hal::Delay;
-    //If your hw setup produces an rx echo everytime you tx
-    //(which is normal) then you need to set this to true
-    let echo = true;
-    let cctalk = SharedCctalk::new(uart, delay, echo);
 
+    let delay = Delay::new();
+
+    let arc_uart = Arc::new(Mutex::new(uart));
+    let arc_delay = Arc::new(Mutex::new(delay));
+
+    CctalkDriver::new(arc_uart, arc_delay, true)
+});
+
+
+fn main() -> Result<(), Box<dyn Error>> {
+    
     println!("scanning cctalk addresses....");
     let addrs = cctalk.addr_scan(ADDR_SCAN_TIMEOUT)?;
     
-    //this only cares about the 1st device it detects
-    //so will only work if you have a single note acceptor attached
-    //currently!
-
+    //have to have at least 1 device, or we will bail...
     if addrs.len() > 0 {
+        let mut devices: Vec<CctalkDevice<Init, Uart, Delay>> = vec![];
        
         println!("received addresses: {:?}", addrs);
-        //bus needs loooong delay after address scan
-        //before devices will respond again
-        //to give all devices chance to answer
+        //bus needs loooong delay after address scan devices 
+        // will respond again to give all devices chance to answer
         sleep(ADDR_SCAN_PAUSE);
        
+        //setup all found devices
+        for addr in addrs {
 
-        println!("probing addr: {}", addrs[0]);
-        let device = CctalkDevice::new(addrs[0], cctalk);
-        let device = device.probe()?;
-        println!(
-            "device found: {} {} {}",
-            device.info.manu, device.info.kind, device.info.model
-        );
+            println!("probing addr: {}", addr);
+            let device = CctalkDevice::new(addr, CCTALK.clone());
+            let device = device.probe()?;
+            println!(
+                "device found: {} {} {}",
+                device.info.manu, device.info.kind, device.info.model
+            );
 
-        //enable escrow if you want to respond to notes and then reject
-        //valid notes based on some criteria in you event loop
-        let escrow = true;
-        let mut device = device.init(escrow)?;
-        
-        println!(
-            "{} {} initialised! Ready for use\n",
-            device.info.kind, device.info.model
-        );
-
+            //enable escrow if you want to respond to notes and then reject
+            //valid notes based on some criteria in you event loop
+            let escrow = true;
+            let mut device = device.init(escrow)?;
+            
+            println!(
+                "{} {} initialised! Ready for use\n",
+                device.info.kind, device.info.model
+            );
+            
+            //add it to our collection of devices
+            devices.push(device.clone());
+        }
+       
         //main polling loop for NV event counter
+        let mut credits = 0_f32;
         let mut last_event: IntEvent = IntEvent::default();
         loop {
-            match device.get_int_events() {
+            match device in &mut devices {
                 Ok(res) => {
                     if !res.is_empty() {
                         for event in res {
                             match event.clone() {
                                 IntEvent::StackedNote(slot) => {
-                                    //rejected barcode ticket produces spurious slot 1 acceptance
-                                    //event on non-=barcode enabled n/acceptors (e.g NV9/NV10)
+                                    //rejected barcode ticket/note produces spurious slot 1 acceptance
+                                    //event on NV9/NV10 - omit if your n/acc doesn't have this problem'
                                     if last_event == IntEvent::DevError(BillReturnedFromEscrow) {
                                         println!("ignoring spurious event")
                                     } else {
-                                        println!("note slot {slot} stacked");
+                                        let credit =
+                                            device.currancy.unwrap().slot_to_currancy(slot);
+                                        credits += credit;
+                                        println!(
+                                            "£{credit:.2} accepted, current credit: £{credits:.2}\n"
+                                        );
+ 
                                     }
                                 }
                                 //I'm auto-applying escrow acceptance - alter if it fits yout application
@@ -123,26 +145,31 @@ fn main() -> Result<(), Box<dyn Error>> {
 ```
 
 Terminal Output: 
-1) showing device setup 
-2) showing acceptance of a £10 note 
-3) rejecting an unidentified object (barcode ticket))
+1) showing device setup (coinmech on 2 and note acceptor on 40)
+2) showing acceptance of a £20 note 
+3) rejecting an unidentified object (dodgy £5 note!))
+4) accepting good £5 note
+
+    credit meter accumalates as money is added
 ```
 scanning cctalk addresses....
-received addresses: [40]
+received addresses: [2, 40]
+probing addr: 2
+device found: MEI Coinmech CF952X
+Coinmech CF952X initialised! Ready for use
+
 probing addr: 40
-found 16-bit device!
 device found: ITL Note Acceptor NV10
 Note Acceptor NV10 initialised! Ready for use
 
-events: [RawResult { a: 2, b: 1 }]
-actioning escrow on note slot 2
-events: [RawResult { a: 2, b: 0 }]
-note slot 2 stacked
+ actioning escrow on note slot 3
+£20 accepted, current credit: £20.00
 
-events: [RawResult { a: 0, b: 1 }, RawResult { a: 1, b: 0 }]
 event error: BillReturnedFromEscrow
 ignoring spurious event
-```
+
+actioning escrow on note slot 1
+£5 accepted, current credit: £25.00```
 
 ## CCTalk Packet description
 Standard Packet (in bytes) is:

@@ -2,7 +2,7 @@ extern crate alloc;
 extern crate spin;
 
 use alloc::sync::Arc;
-use spin::{Mutex, MutexGuard};
+use spin::Mutex;
 
 use super::headers::CcTalkHeader;
 use crate::{device::CctalkEncStatus, errors::CctalkTransmissionError, message::CctalkMessage};
@@ -13,32 +13,61 @@ use nb::block;
 
 const ADDR_POL: [u8; 5] = [0x00, 0x00, 0x01, CcTalkHeader::AddressPoll as u8, 0x02];
 
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd)]
-pub struct Cctalk<U, D> {
-    uart: U,
-    delay: D,
+#[derive(Debug, Default)]
+pub struct CctalkDriver<U, D> {
+    uart: Arc<Mutex<U>>,
+    delay: Arc<Mutex<D>>,
     pub echo: bool,
 }
 
-impl<U, D> Cctalk<U, D>
+impl<U, D> Clone for CctalkDriver<U, D> {
+    fn clone(&self) -> Self {
+        Self {
+            uart: Arc::clone(&self.uart),
+            delay: Arc::clone(&self.delay),
+            echo: self.echo,
+        }
+    }
+}
+
+impl<U, D> CctalkDriver<U, D>
 where
     U: Read + Write,
     D: DelayNs,
 {
-    pub fn new(uart: U, delay: D, echo: bool) -> Self {
+    /* ===================================================
+     *
+     *
+     *            Initialisation Fn
+     *
+     *
+     * ===================================================
+     * */
+    pub fn new(uart: Arc<Mutex<U>>, delay: Arc<Mutex<D>>, echo: bool) -> Self {
         Self { uart, delay, echo }
     }
+    /* ===================================================
+     *
+     *
+     *          Low-level Transfer Fn's'
+     *
+     *
+     * ===================================================
+     * */
 
     pub fn read_bytes(
         &mut self,
         timeout_ms: u32,
     ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
+        let mut delay = self.delay.lock();
+        let mut uart = self.uart.lock();
+
         let mut n = 0_usize;
         let mut rx_buf: hVec<u8, 260> = hVec::new();
         const POLL_INTERVAL_MS: u32 = 1_u32;
         let mut elapsed_ms = 0_u32;
         loop {
-            match self.uart.read() {
+            match uart.read() {
                 Ok(byte) => {
                     elapsed_ms = 0_u32; //reset timeout after each successful read
                     let _ = rx_buf.push(byte);
@@ -49,7 +78,7 @@ where
                     }
                 }
                 Err(nb::Error::WouldBlock) => {
-                    self.delay.delay_ms(POLL_INTERVAL_MS);
+                    delay.delay_ms(POLL_INTERVAL_MS);
                     elapsed_ms += POLL_INTERVAL_MS;
 
                     if elapsed_ms >= timeout_ms {
@@ -71,11 +100,14 @@ where
         timeout_ms: u32,
         num_bytes: usize,
     ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
+        let mut delay = self.delay.lock();
+        let mut uart = self.uart.lock();
+
         let mut rx_buf: hVec<u8, 260> = hVec::new();
         const POLL_INTERVAL_MS: u32 = 5_u32;
         let mut elapsed_ms = 0_u32;
         loop {
-            match self.uart.read() {
+            match uart.read() {
                 Ok(byte) => {
                     elapsed_ms = 0_u32; //reset timeout after successful read;
                     let _ = rx_buf.push(byte);
@@ -85,7 +117,7 @@ where
                     }
                 }
                 Err(nb::Error::WouldBlock) => {
-                    self.delay.delay_ms(POLL_INTERVAL_MS);
+                    delay.delay_ms(POLL_INTERVAL_MS);
                     elapsed_ms += POLL_INTERVAL_MS;
 
                     if elapsed_ms >= timeout_ms {
@@ -106,31 +138,15 @@ where
         &mut self,
         bytes: T,
     ) -> Result<(), CctalkTransmissionError> {
+        let mut uart = self.uart.lock();
+
         let bytes = bytes.into();
         let data_slice = bytes.as_slice();
         for dat in data_slice {
-            let _ = block!(self.uart.write(*dat))
+            let _ = block!(uart.write(*dat))
                 .map_err(|_e| CctalkTransmissionError::CctalkSerialWriteError);
         }
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug)] // Deriving Clone is cheap because it just clones the Arc pointer
-pub struct SharedCctalk<U, D>(Arc<Mutex<Cctalk<U, D>>>);
-
-impl<U, D> SharedCctalk<U, D>
-where
-    U: Read + Write,
-    D: DelayNs,
-{
-    pub fn new(uart: U, delay: D, echo: bool) -> Self {
-        let cctalk = Cctalk::new(uart, delay, echo);
-        Self(Arc::new(Mutex::new(cctalk)))
-    }
-
-    pub fn lock(&self) -> MutexGuard<'_, Cctalk<U, D>> {
-        self.0.lock()
     }
 
     /***************************************************************
@@ -141,13 +157,13 @@ where
      *
      *****************************************************************/
 
-    pub fn addr_scan(&self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
-        let mut cctalk = self.0.lock();
+    pub fn addr_scan(&mut self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
+        // let mut cctalk = self.0.lock();
 
-        let _ = cctalk.write_bytes(hVec::from_array(ADDR_POL))?;
+        let _ = self.write_bytes(hVec::from_array(ADDR_POL))?;
 
-        if cctalk.echo {
-            match cctalk.read_bytes_exact(20, ADDR_POL.len()) {
+        if self.echo {
+            match self.read_bytes_exact(20, ADDR_POL.len()) {
                 Ok(rx_bytes) => {
                     if rx_bytes != ADDR_POL {
                         // println!("echo: {:?} does not match {:?}", rx_bytes, ADDR_POL);
@@ -161,15 +177,16 @@ where
             }
         }
 
-        match cctalk.read_bytes(timeout_ms) {
+        match self.read_bytes(timeout_ms) {
             Ok(bytes) => return Ok(bytes),
             Err(e) => return Err(e),
         }
     }
 
-    pub fn addr_scan_16(&self, timeout_ms: u32) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
-        let mut cctalk = self.lock();
-
+    pub fn addr_scan_16(
+        &mut self,
+        timeout_ms: u32,
+    ) -> Result<hVec<u8, 260>, CctalkTransmissionError> {
         let tx = CctalkMessage::new(
             CctalkEncStatus::Unenc16bit,
             None,
@@ -178,10 +195,10 @@ where
             hVec::new(),
         );
 
-        let _ = cctalk.write_bytes(tx.clone())?;
+        let _ = self.write_bytes(tx.clone())?;
 
-        if cctalk.echo {
-            match cctalk.read_bytes_exact(20, tx.clone().packet_len()) {
+        if self.echo {
+            match self.read_bytes_exact(20, tx.clone().packet_len()) {
                 Ok(rx_msg) => {
                     let tx_bytes: hVec<u8, 260> = tx.into();
                     if rx_msg != tx_bytes {
@@ -192,7 +209,7 @@ where
             }
         }
 
-        match cctalk.read_bytes(timeout_ms) {
+        match self.read_bytes(timeout_ms) {
             Ok(bytes) => return Ok(bytes),
             Err(e) => return Err(e),
         }
@@ -265,7 +282,7 @@ mod tests {
         };
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = SharedCctalk::new(uart.clone(), timer, true);
+        let mut cctalk = CctalkDriver::new(uart.clone(), timer, true);
         let mut cctalk = cctalk.lock();
         let result = cctalk.read_bytes_exact(5, 5);
 
@@ -295,7 +312,7 @@ mod tests {
         };
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = SharedCctalk::new(uart.clone(), timer, true);
+        let mut cctalk = CctalkDriver::new(uart.clone(), timer, true);
         let mut cctalk = cctalk.lock();
         let result = cctalk.read_bytes(2);
 
