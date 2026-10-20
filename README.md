@@ -169,7 +169,8 @@ event error: BillReturnedFromEscrow
 ignoring spurious event
 
 actioning escrow on note slot 1
-£5 accepted, current credit: £25.00```
+£5 accepted, current credit: £25.00
+```
 
 ## CCTalk Packet description
 Standard Packet (in bytes) is:
