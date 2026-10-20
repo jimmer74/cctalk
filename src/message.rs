@@ -551,7 +551,7 @@ impl core::fmt::Display for Cctalk8BitChksumMessage {
 //     }
 // }
 
-#[cfg(feature = "std")]
+// #[cfg(feature = "std")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,34 +560,39 @@ mod tests {
 
     #[test]
     fn test_16_bit_crc() {
-        let msg = CctalkMessage::<CctalkCRC16ChksumMessage>::new(0x28, ResetDevice, hVec::new());
-
-        assert_eq!(msg.chksum_lsb, 0x46);
-        assert_eq!(msg.chksum_msb, 0x3f);
+        let msg = CctalkMessage::new(
+            CctalkEncStatus::Unenc16bit,
+            Some(1),
+            0x28,
+            ResetDevice,
+            hVec::new(),
+        );
+        let bytes: hVec<u8, 260> = msg.into();
+        assert_eq!(bytes[2], 0x46);
+        assert_eq!(bytes[4], 0x3f);
     }
 
     #[test]
     fn test_bad_8bit_cctalk() {
         //this is an incorrect message (checksum should be wrong)
-        let testcase = CctalkMessage {
-            value: Cctalk8BitChksumMessage {
-                dest: 0x02,
-                //new fn auto-calcs len, need to supply manually here
-                len: 0x02,
-                src: 0x01,
-                //new fn converts this on fly, but have to do manually here
-                header: CcTalkHeader::DispenseHopperCoins as u8,
-                data: hVec::from_array([0x02, 0x02]),
-                chksum: 0x22,
-            },
-        };
+        let testcase = CctalkMessage::MSG8(Cctalk8BitChksumMessage {
+            dest: 0x02,
+            //new fn auto-calcs len, need to supply manually here
+            len: 0x02,
+            src: 0x01,
+            //new fn converts this on fly, but have to do manually here
+            header: CcTalkHeader::DispenseHopperCoins as u8,
+            data: hVec::from_array([0x02, 0x02]),
+            chksum: 0x22,
+        });
 
         //check new() does not match above (i.e. checksum is wrong as expected)
         assert_ne!(
             testcase,
-            CctalkMessage::<Cctalk8BitChksumMessage>::new(
+            CctalkMessage::new(
+                CctalkEncStatus::Unenc8Bit,
+                Some(1),
                 0x02,
-                0x01,
                 CcTalkHeader::DispenseHopperCoins,
                 hVec::from_array([0x02, 0x02])
             )
@@ -596,17 +601,14 @@ mod tests {
 
     #[test]
     fn test_wrong_chksum() {
-        let testcase = CctalkMessage {
-            value: Cctalk8BitChksumMessage {
-                dest: 0x02,
-                len: 0x02,
-                src: 0x01,
-                header: CcTalkHeader::SimplePoll as u8,
-                data: hVec::from([0x2, 0x0]),
-                chksum: 0xFF,
-            },
+        let testcase = Cctalk8BitChksumMessage {
+            dest: 0x02,
+            len: 0x02,
+            src: 0x01,
+            header: CcTalkHeader::SimplePoll as u8,
+            data: hVec::from([0x2, 0x0]),
+            chksum: 0xFF,
         };
-        std::println!("{}", testcase.calc_chksum());
         let res = testcase.chksum_valid();
         match res {
             Err(e) => {
@@ -621,16 +623,14 @@ mod tests {
 
     #[test]
     fn test_wrong_len() {
-        let testcase = CctalkMessage::<Cctalk8BitChksumMessage> {
-            value: Cctalk8BitChksumMessage {
-                dest: 0x02,
-                len: 0x00,
-                src: 0x01,
-                header: CcTalkHeader::SimplePoll as u8,
-                data: hVec::from_array([0x2, 0x0]),
-                chksum: 0xFF,
-            },
-        };
+        let testcase = CctalkMessage::MSG8(Cctalk8BitChksumMessage {
+            dest: 0x02,
+            len: 0x00,
+            src: 0x01,
+            header: CcTalkHeader::SimplePoll as u8,
+            data: hVec::from_array([0x2, 0x0]),
+            chksum: 0xFF,
+        });
         let res = testcase.len_valid();
         match res {
             Err(e) => {
@@ -645,9 +645,10 @@ mod tests {
 
     #[test]
     fn test_msg8_to_bytes() {
-        let testcase = CctalkMessage::<Cctalk8BitChksumMessage>::new(
+        let testcase = CctalkMessage::new(
+            CctalkEncStatus::Unenc8Bit,
+            Some(0x01),
             0x02,
-            0x01,
             CcTalkHeader::UploadCalibrationData,
             hVec::from_array([0x34, 0xFF, 0x98, 0x13]),
         );
@@ -667,7 +668,7 @@ mod tests {
             ])
         )
     }
-
+    #[cfg(feature = "std")]
     #[test]
     fn test_msg8_from_bytes() {
         /*============================
@@ -676,8 +677,13 @@ mod tests {
         let mut route_bill_to_stacker = [040, 001, 001, 154, 001, 059];
         let test_case: hVec<u8, 260> = hVec::from_array(route_bill_to_stacker);
 
-        let test_msg = Msg8::try_from(test_case);
-        let act_msg = Msg8::new(040, 001, CcTalkHeader::RouteBill, hVec::from_array([001]));
+        let test_msg = Cctalk8BitChksumMessage::try_from(test_case);
+        let act_msg = Cctalk8BitChksumMessage::new(
+            040,
+            001,
+            CcTalkHeader::RouteBill,
+            hVec::from_array([001]),
+        );
 
         //msg should be correct!
         assert_eq!(test_msg.unwrap(), act_msg);
@@ -688,7 +694,7 @@ mod tests {
         route_bill_to_stacker[5] = 060; // alter chksum to incorrect value (60 - should be 59)
         let test_case2: hVec<u8, 260> = hVec::from_array(route_bill_to_stacker);
 
-        let msg2 = Msg8::try_from(test_case2);
+        let msg2 = Cctalk8BitChksumMessage::try_from(test_case2);
 
         //should be 59, but chksum is 60 so throws an error
         assert_eq!(Err(CctalkMessageError::IncorrectChksum(60, 59)), msg2);
@@ -700,7 +706,7 @@ mod tests {
         route_bill_to_stacker[1] = 002; //set incorrect data len (should be 001)
         let test_case3: hVec<u8, 260> = hVec::from_array(route_bill_to_stacker);
 
-        let msg3 = Msg8::try_from(test_case3);
+        let msg3 = Cctalk8BitChksumMessage::try_from(test_case3);
 
         //msg should be 7 bytes total (according to byte 2) but only 6 bytes - so throws an error
         assert_eq!(Err(CctalkMessageError::IncorrectDataLen(7, 6)), msg3);

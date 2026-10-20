@@ -255,7 +255,11 @@ mod tests {
         };
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = Cctalk::new(uart.clone(), timer, true);
+        let mut cctalk = CctalkDriver::new(
+            Arc::new(Mutex::new(uart.clone())),
+            Arc::new(Mutex::new(timer)),
+            true,
+        );
 
         let result = cctalk.read_bytes_exact(5, 5);
 
@@ -277,13 +281,12 @@ mod tests {
             UartTransaction::read_error(WouldBlock),
         ];
 
-        let mut timer = MockDelay {
+        let mut timer = Arc::new(Mutex::new(MockDelay {
             total_ms_delayed: 0,
-        };
+        }));
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = CctalkDriver::new(uart.clone(), timer, true);
-        let mut cctalk = cctalk.lock();
+        let mut cctalk = CctalkDriver::new(Arc::new(Mutex::new(uart.clone())), timer, true);
         let result = cctalk.read_bytes_exact(5, 5);
 
         assert_ne!(result.unwrap(), rx_bytes); // WARN: left 4 bytes, right 5 bytes - currently no error
@@ -307,13 +310,12 @@ mod tests {
             UartTransaction::read_error(WouldBlock),
         ];
 
-        let mut timer = MockDelay {
+        let mut timer = Arc::new(Mutex::new(MockDelay {
             total_ms_delayed: 0,
-        };
+        }));
 
         let mut uart = UartMock::new(&expectations);
-        let mut cctalk = CctalkDriver::new(uart.clone(), timer, true);
-        let mut cctalk = cctalk.lock();
+        let mut cctalk = CctalkDriver::new(Arc::new(Mutex::new(uart.clone())), timer, true);
         let result = cctalk.read_bytes(2);
 
         assert_eq!(result.unwrap(), rx_bytes);
