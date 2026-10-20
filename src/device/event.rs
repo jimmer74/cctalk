@@ -36,8 +36,9 @@ impl IntEvent {
         let a = value.a;
         let b = value.b;
 
-        //1st case if a is zero, then b is error code
-        //TODO: rework match statement below to incorporate this fact
+        //TODO: EventErrors for coinmechs are different to note acceptors
+        //will ultimately need to change all this to use a unified type
+        //poss an enum, like I did with Msg8 and Msg16
         if a == 0 {
             return Self::DevError(EventError::from(b));
         }
