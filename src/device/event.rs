@@ -1,8 +1,9 @@
-use crate::errors::EventError;
+use crate::{device::CctalkDeviceKind, errors::EventError};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum IntEvent {
-    StackedNote(u8),
+    StackedNote { slot: u8 },
+    AcceptedCoin { slot: u8, sorter_path: Option<u8> },
     NoteEscrow(u8),
     Barcode,
     BarcodeEscrow,
@@ -24,13 +25,14 @@ impl Default for IntEvent {
  * (a,b) => (255, 1) Ticket held in escrow
  * (a,b) (1..=254, 0) Note Accepted (a is note slot number (need to look up in currency table))
  * (a,b) => (1..=254, 1) Note held in Escrow
+ * (a,b) => (1..=254, 1..=8) Coin Diverted to Sorter Path  NOTE: Overlaps with Note in escrow!
  * (a,b) => (0, 1..=21) Error Codes Various
  *
  *
  * */
 
-impl From<RawResult> for IntEvent {
-    fn from(value: RawResult) -> Self {
+impl IntEvent {
+    pub fn new(value: RawResult, kind: &CctalkDeviceKind) -> Self {
         let a = value.a;
         let b = value.b;
 
@@ -40,17 +42,36 @@ impl From<RawResult> for IntEvent {
             return Self::DevError(EventError::from(b));
         }
 
-        match (a, b) {
-            //note slot 1->254, error slot: Escrow Hold
-            (1..255, 1) => Self::NoteEscrow(a),
-            //note slot 1->254, error slot: Note stacked/Accepted
-            (1..255, 0) => Self::StackedNote(a),
-            //barcode/ticket slot 255, error slot: Ticket stacked/Accepted
-            (255, 0) => Self::Barcode,
-            //barcodde/ticket slot: 255, error slot: Escrow Hold
-            (255, 1) => Self::BarcodeEscrow,
-            //anything else (b must be an error code)
-            (_, _) => Self::DevError(EventError::from(b)),
+        if *kind == CctalkDeviceKind::NoteAcceptor {
+            match (a, b) {
+                //note slot 1->254, error slot: Escrow Hold
+                (1..255, 1) => Self::NoteEscrow(a),
+                //note slot 1->254, error slot: Note stacked/Accepted
+                (1..255, 0) => Self::StackedNote { slot: a },
+                //barcode/ticket slot 255, error slot: Ticket stacked/Accepted
+                (255, 0) => Self::Barcode,
+                //barcodde/ticket slot: 255, error slot: Escrow Hold
+                (255, 1) => Self::BarcodeEscrow,
+                //anything else (b must be an error code)
+                (_, _) => Self::DevError(EventError::from(b)),
+            }
+        } else {
+            //WARN: need this as not smart enough to clock
+            //my (_,_) in last arm! Do not remove!
+            #[allow(non_contiguous_range_endpoints)]
+            match (a, b) {
+                //note slot 1->254, error slot: Escrow Hold
+                (1..255, 1..=8) => Self::AcceptedCoin {
+                    slot: a,
+                    sorter_path: Some(b),
+                },
+                (1..255, 0) => Self::AcceptedCoin {
+                    slot: a,
+                    sorter_path: None,
+                },
+                //anything else (b must be an error code)
+                (_, _) => Self::DevError(EventError::from(b)),
+            }
         }
     }
 }

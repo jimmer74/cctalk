@@ -160,7 +160,9 @@ where
 
         #[cfg(feature = "debug")]
         std::println!("uninibiting all slots");
-        let _header = self.inhibit_all_slots(false)?;
+        let _header = self
+            .inhibit_all_slots(false)
+            .unwrap_or(CcTalkHeader::UknownHeader);
         #[cfg(feature = "debug")]
         std::println!("uninhibited all slots, result: {}", _header);
 
@@ -441,11 +443,12 @@ where
             // or [2, 0, 1]
             // val in major = (val in minor * 1 * 1) / 100
             //              = val_in_minor/100
-            currancy.sf = [2, 0, 1]
+            currancy.sf = [1, 0, 2]
         }
         Ok(currancy)
     }
 }
+
 fn process_coin_array(dat: &[u8]) -> Option<(u8, [u8; 2])> {
     let mut slot_amt: hVec<u8, 6> = hVec::new();
     let mut country_code: [u8; 2] = [0x00, 0x00];
@@ -503,7 +506,7 @@ where
         let in_events = self.read_events(Some(20))?;
 
         for event in in_events {
-            _ = out_events.push(IntEvent::from(event))
+            _ = out_events.push(IntEvent::new(event, &self.info.kind));
         }
 
         Ok(out_events)
